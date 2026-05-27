@@ -1,0 +1,44 @@
+{
+    "name": "mustard-cpp",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": ".."
+    },
+
+    // X11 forwarding for GUI (works on Linux and Windows + WSLg automatically).
+    // Windows + VcXsrv: set DISPLAY=host.docker.internal:0.0 in your local environment
+    //   before opening the container.
+    // GPU passthrough (optional): uncomment the /dev/dri device line below and set
+    //   LIBGL_ALWAYS_SOFTWARE=0 in containerEnv.
+    "runArgs": [
+        "--env", "DISPLAY=${localEnv:DISPLAY}",
+        "--volume", "/tmp/.X11-unix:/tmp/.X11-unix:rw"
+        // "--device", "/dev/dri"   // uncomment for host GPU passthrough (Linux only)
+    ],
+
+    "containerEnv": {
+        // Mesa software renderer — remove or set to 0 when using GPU passthrough.
+        "LIBGL_ALWAYS_SOFTWARE": "1"
+    },
+
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.cpptools",
+                "ms-vscode.cmake-tools",
+                "ms-vscode.cpptools-extension-pack"
+            ],
+            "settings": {
+                "cmake.buildDirectory": "${workspaceFolder}/build",
+                "cmake.configureOnOpen": true,
+                "cmake.generator": "Ninja",
+                "cmake.buildType": "Debug",
+                "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools"
+            }
+        }
+    },
+
+    // Configure the project on container create.
+    // For headless test runs use: xvfb-run ctest --test-dir build
+    "postCreateCommand": "cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug"
+}
