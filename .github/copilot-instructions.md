@@ -4,7 +4,7 @@
 C++ DVS Event Viewer — Dear ImGui + GLFW + OpenGL 3.3 + GLAD. Ports a Python Kivy GUI.
 Architecture: `DataLoader<T>` → `DataStream<T>` → `ChunkCache<T>` → `ViewerPanel` synchronized by `TimeController`.
 
-See [docs/plan.md](../docs/plan.md) for full architecture, phase plan, and decisions.
+See [.github/plan.md](./plan.md) for full architecture, phase plan, and decisions.
 
 ## Language & Standard
 - **C++17** throughout: `std::optional`, `std::filesystem`, structured bindings, `if constexpr`
