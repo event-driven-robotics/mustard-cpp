@@ -2,7 +2,7 @@
 description: "Scaffold a new processing callback function for the DataLoader<T> callback pipeline. Provide the loader type and what the callback should do."
 agent: agent
 tools: [read, edit, search]
-argument-hint: "Loader type and callback purpose (e.g. BinaryEventLoader: filter events below y=100)"
+argument-hint: "Loader type and callback purpose (e.g. IITDatalogLoader: filter events below y=100)"
 ---
 Scaffold a new callback for the `DataLoader<T>` callback pipeline based on: `$ARGUMENTS`
 

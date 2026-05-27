@@ -38,7 +38,7 @@ mustard-cpp/
 │   │   ├── DataLoader.h            # abstract template base + callback pipeline
 │   │   ├── DataStream.h            # abstract: getDataAtTime(t) -> optional<DataChunk<T>>
 │   │   ├── events/
-│   │   │   └── BinaryEventLoader.h # PENDING: custom binary format spec
+│   │   │   └── IITDatalogLoader.h  # iitdatalog format (sample: data_samples/iitdatalog/)
 │   │   └── image/
 │   │       └── StbImageLoader.h
 │   ├── annotation/
@@ -55,7 +55,7 @@ mustard-cpp/
 │   ├── core/TimeController.cpp
 │   ├── data/
 │   │   ├── ChunkCache.cpp
-│   │   ├── events/BinaryEventLoader.cpp
+│   │   ├── events/IITDatalogLoader.cpp
 │   │   └── image/StbImageLoader.cpp
 │   ├── annotation/
 │   │   ├── BoundingBox.cpp
@@ -73,7 +73,8 @@ mustard-cpp/
 │   ├── test_callback_pipeline.cpp  # filter chain applied in order
 │   ├── test_annotation_store.cpp   # add/remove/serialize bboxes
 │   └── test_viewer_state.cpp       # viewer time-sync, no rendering
-├── samples/                        # benchmark data (user-provided)
+├── data_samples/                   # sample recordings (git-lfs tracked)
+│   └── iitdatalog/                 # iitdatalog format sample (data.log + info.log)
 └── third_party/
     └── stb/                        # stb_image.h (single-header, vendored)
 ```
@@ -131,7 +132,7 @@ All files live under `.github/` — git-tracked, team-shared.
 
 ### Phase 3 — Concrete Loaders *(depends on Phase 2)*
 
-#### Custom Binary Event Format Spec (now known)
+#### iitdatalog Format Spec (now known)
 - **Per-line structure**: `packet_num  sec.usec  AE  duration_usec  "«escaped_binary»"`
 - **Unescape step**: strip surrounding quotes; resolve `\\`→`\`, `\n`→`0x0A`, `\r`→`0x0D`, `\0`→`0x00`, `\x`→`x` (any other char after backslash). Optimize by pre-reserving output to `src.size()` and using index-based loop (avoid per-char heap alloc of the original code).
 - **Event struct (32-bit, ENABLE_TS=0)** — portable bitmask decode of a `uint32_t`:
@@ -143,7 +144,7 @@ All files live under `.github/` — git-tracked, team-shared.
   - **Do NOT use compiler bit-fields for decode** — use explicit `& mask` shifts for portability
 - **Per-event timestamp**: all events in a packet share the packet header timestamp. Convert `sec.usec` string → `int64_t` microseconds.
 
-#### BinaryEventLoader implementation
+#### IITDatalogLoader implementation
 1. **open()**: scan file line-by-line; for each line parse only the text header fields (read until first `"`); record `PacketIndex{file_offset_of_binary, timestamp_us, line_byte_length}` in `std::vector`. Build O(N_packets) index in memory, O(1) per packet. Store `t_start = index[0].ts`, `t_end = index.back().ts`.
 2. **Resolution detection**: after indexing, sample ~50 random packet indices, decode their events, track max x/y. `sensor_width = max_x + 1`, `sensor_height = max_y + 1`. Default fallback: 640×480. Store as `uint16_t sensor_w, sensor_h` on the loader.
 3. **readChunk(t0, t1)**: binary-search `PacketIndex` for t0 → `seekg()` to offset → read and process packets until `ts > t1`; return `DataChunk<DVSEvent>`. All events in a packet get the same `t` from the header (no sub-packet ordering).
@@ -204,9 +205,9 @@ All files live under `.github/` — git-tracked, team-shared.
 - **ImGui docking branch** (`IMGUI_HAS_DOCK`): enables multi-panel drag-and-drop layout
 - **stb_image vendored** (single-header): no CMake complexity, zero deps
 - **No third-party JSON lib initially**: hand-rolled annotation serialization to keep deps minimal; can swap to nlohmann later
-- **BinaryEventLoader blocked**: needs custom format spec before implementation
+- **IITDatalogLoader**: format spec known; sample data at `data_samples/iitdatalog/` (tracked via git-lfs)
 
 ## Pending / Blockers
-- **Custom binary event format spec**: needed before BinaryEventLoader can be implemented (Phase 3)
+- **IITDatalogLoader**: format spec known; implement in Phase 3 using sample at `data_samples/iitdatalog/`
 - **Sensor resolution**: needed to pre-allocate event frame buffers (EventViewerPanel). Typical: 346x260 (DAVIS346), 640x480, 1280x720
 - **Default accumulation window**: time window for event-to-frame accumulation (suggest: 20ms default, user-configurable per panel)

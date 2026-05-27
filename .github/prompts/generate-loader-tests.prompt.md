@@ -2,7 +2,7 @@
 description: "Generate a complete GoogleTest file for a DataLoader class using synthetic binary data. Provide the loader class name and data type."
 agent: agent
 tools: [read, edit, search]
-argument-hint: "DataLoader class name (e.g. BinaryEventLoader)"
+argument-hint: "DataLoader class name (e.g. IITDatalogLoader)"
 ---
 Generate a complete GoogleTest unit test file for the `$ARGUMENTS` DataLoader class.
 

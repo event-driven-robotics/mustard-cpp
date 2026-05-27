@@ -40,7 +40,7 @@ Singleton-like shared state: `current_time`, `start_time`, `end_time`, `is_playi
 Abstract panel. Pure virtual: `draw(ImDrawList*, ImVec2 origin, ImVec2 size)`, `onTimeChanged(int64_t t)`.
 Owns a shared DataStream + AnnotationStore. Multiple panels share one TimeController.
 
-## Binary Decode Rules (DVS Events)
+## Binary Decode Rules (iitdatalog format)
 - **Never use compiler bit-fields** — always explicit `& mask` + shift for portability
 - DVSEvent 32-bit layout (ENABLE_TS=0): bit 0 = polarity, bits 1–11 = x (11 bits), bits 12–21 = y (10 bits), bits 22–25 = metadata
 - Timestamps: `sec.usec` text header → `int64_t` microseconds
@@ -59,6 +59,11 @@ Owns a shared DataStream + AnnotationStore. Multiple panels share one TimeContro
 - Synthetic data only: construct `DataChunk` / `DVSEvent` vectors in-process; no file I/O in unit tests
 - Fixture naming: `class <Module>Test : public ::testing::Test`
 - See `.github/instructions/test-conventions.instructions.md` for full rules
+
+## Data Samples
+- `data_samples/` is tracked with **git-lfs** (`.gitattributes`: `data_samples/** filter=lfs`)
+- Subdirectory per format: `data_samples/iitdatalog/`, `data_samples/<format>/`, …
+- Use sample files for manual testing and benchmarks only — unit tests use synthetic in-process data
 
 ## DevContainer
 - Ubuntu 24.04; Mesa SW renderer (`LIBGL_ALWAYS_SOFTWARE=1`); no GPU required

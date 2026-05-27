@@ -2,7 +2,7 @@
 description: "Audit a binary decode function or file parser for correctness and portability issues. Checks for: no bit-fields, correct masks, little-endian safety, unescape correctness, and off-by-one errors."
 agent: agent
 tools: [read, search]
-argument-hint: "File path or function name to audit (e.g. src/data/events/BinaryEventLoader.cpp)"
+argument-hint: "File path or function name to audit (e.g. src/data/events/IITDatalogLoader.cpp)"
 ---
 Audit the binary decode logic in `$ARGUMENTS` for the following issues. Report each finding with: file, line range, issue category, description, and a corrected code snippet.
 
