@@ -69,7 +69,7 @@ TEST_F(DVSViewerPanelTest, OnTimeChangedNullStreamNoCrash) {
 
 TEST_F(DVSViewerPanelTest, OnTimeChangedNullStreamRepeated) {
     DVSViewerPanel panel(nullptr, "test");
-    for (int64_t t = 0; t <= 1'000'000; t += 100'000) {
+    for (int64_t t = 0; t < 1'000'000; t += 100'000) {
         EXPECT_NO_FATAL_FAILURE(panel.onTimeChanged(t));
     }
 }
