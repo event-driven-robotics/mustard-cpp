@@ -25,6 +25,14 @@ target_link_libraries(test_dvsviewer_panel PRIVATE mustard glad imgui GTest::gte
 target_include_directories(test_dvsviewer_panel PRIVATE ${CMAKE_SOURCE_DIR}/include)
 add_test(NAME test_dvsviewer_panel COMMAND test_dvsviewer_panel)
 
+# Annotation store tests — no OpenGL calls at runtime; imgui is needed because
+# BoundingBox.o (pulled from mustard) contains compiled renderOverlay code that
+# references ImDrawList symbols.
+add_executable(test_annotation_store test_annotation_store.cpp)
+target_link_libraries(test_annotation_store PRIVATE mustard imgui GTest::gtest_main)
+target_include_directories(test_annotation_store PRIVATE ${CMAKE_SOURCE_DIR}/include)
+add_test(NAME test_annotation_store COMMAND test_annotation_store)
+
 # Synthetic-data loader test (writes a temp file in /tmp — no sample files)
 mustard_add_test(test_iitdatalog_loader test_iitdatalog_loader.cpp)
 

@@ -1,7 +1,10 @@
 #pragma once
+#include "mustard/annotation/AnnotationStore.h"
 #include "mustard/data/events/IITDatalogStream.h"
 
 #include <glad/gl.h>
+#include "imgui.h"
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -17,10 +20,20 @@ namespace mustard {
 ///
 /// Events are accumulated in a rolling window of kAccumWindowUs ending at
 /// the current playhead time.
+///
+/// When an AnnotationStore is attached and mode is kDrawBBox the user can
+/// interactively drag a bounding box onto the sensor image.
 class DVSViewerPanel {
 public:
     /// Rolling accumulation window in microseconds (~33 ms ≈ 30 fps).
     static constexpr int64_t kAccumWindowUs = 33'333;
+
+    /// Interaction mode controlling what happens when the user clicks/drags
+    /// inside the sensor image area.
+    enum class InteractionMode {
+        kObserve,   ///< Default: no drawing, annotations are displayed read-only.
+        kDrawBBox,  ///< Click-drag to create a BoundingBox annotation.
+    };
 
     explicit DVSViewerPanel(std::shared_ptr<IITDatalogStream> stream,
                             std::string                        label);
@@ -39,6 +52,18 @@ public:
 
     const std::string& label() const noexcept { return label_; }
 
+    // ------------------------------------------------------------------
+    // Annotation API
+    // ------------------------------------------------------------------
+
+    /// Attach an AnnotationStore.  Annotations at the current timestamp are
+    /// always rendered as overlays regardless of the interaction mode.
+    void setAnnotationStore(std::shared_ptr<AnnotationStore> store);
+
+    /// Switch interaction mode.
+    void            setInteractionMode(InteractionMode mode) noexcept;
+    InteractionMode interactionMode()                  const noexcept;
+
 private:
     void ensureTexture(int w, int h);
     void uploadTexture();
@@ -54,6 +79,12 @@ private:
     std::vector<uint8_t> pixels_; ///< RGBA row-major pixel buffer
 
     int64_t last_time_{-1};
+
+    // Annotation state
+    std::shared_ptr<AnnotationStore> ann_store_;
+    InteractionMode                  mode_{InteractionMode::kObserve};
+    ImVec2                           drag_start_{0.f, 0.f};
+    bool                             dragging_{false};
 };
 
 } // namespace mustard

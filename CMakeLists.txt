@@ -23,9 +23,14 @@ add_library(mustard STATIC
     src/core/TimeController.cpp
     src/data/events/IITDatalogLoader.cpp
     src/data/events/IITDatalogStream.cpp
+    src/annotation/BoundingBox.cpp
+    src/annotation/AnnotationStore.cpp
 )
 target_include_directories(mustard PUBLIC include)
-target_link_libraries(mustard PRIVATE)
+# imgui is needed here so that BoundingBox.cpp can find imgui.h at compile time.
+# PRIVATE keeps it out of mustard's public interface so pure-data test targets
+# that don't reference annotation types are unaffected.
+target_link_libraries(mustard PRIVATE imgui)
 
 # ---------------------------------------------------------------------------
 # mustard_app — viewer executable
