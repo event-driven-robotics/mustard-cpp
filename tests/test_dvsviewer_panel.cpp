@@ -62,7 +62,7 @@ TEST_F(DVSViewerPanelTest, LabelWithSpecialCharacters) {
 // onTimeChanged — guard 1: !stream_ (nullptr), no GL path reachable
 // ---------------------------------------------------------------------------
 
-TEST_F(DVSViewerPanelTest, OnTimeChangedNullStreamNocrash) {
+TEST_F(DVSViewerPanelTest, OnTimeChangedNullStreamNoCrash) {
     DVSViewerPanel panel(nullptr, "test");
     EXPECT_NO_FATAL_FAILURE(panel.onTimeChanged(0));
 }
@@ -102,7 +102,7 @@ TEST_F(DVSViewerPanelTest, OnTimeChangedNullStreamZeroThenNegative) {
 // Destructor safety
 // ---------------------------------------------------------------------------
 
-TEST_F(DVSViewerPanelTest, DestructorNullStreamNocrash) {
+TEST_F(DVSViewerPanelTest, DestructorNullStreamNoCrash) {
     // texture_id_ == 0 at construction → ~DVSViewerPanel must NOT call
     // glDeleteTextures, making destruction safe without a GL context
     {
