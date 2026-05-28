@@ -22,6 +22,7 @@ target_compile_definitions(glad PRIVATE GLAD_GL_VERSION_MAJOR=3 GLAD_GL_VERSION_
 add_library(mustard STATIC
     src/core/TimeController.cpp
     src/data/events/IITDatalogLoader.cpp
+    src/data/events/IITDatalogStream.cpp
 )
 target_include_directories(mustard PUBLIC include)
 target_link_libraries(mustard PRIVATE)
@@ -29,7 +30,11 @@ target_link_libraries(mustard PRIVATE)
 # ---------------------------------------------------------------------------
 # mustard_app — viewer executable
 # ---------------------------------------------------------------------------
-add_executable(mustard_app src/app/main.cpp)
+add_executable(mustard_app
+    src/app/main.cpp
+    src/app/App.cpp
+    src/ui/DVSViewerPanel.cpp
+)
 target_link_libraries(mustard_app PRIVATE mustard imgui glfw glad)
 target_compile_definitions(mustard_app PRIVATE IMGUI_IMPL_OPENGL_LOADER_GLAD2)
 
