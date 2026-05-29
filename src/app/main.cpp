@@ -1,3 +1,5 @@
+#include "mustard/app/App.h"
+
 #include <glad/gl.h>
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
@@ -57,7 +59,9 @@ int main() {
     ImGui_ImplGlfw_InitForOpenGL(window, /*install_callbacks=*/true);
     ImGui_ImplOpenGL3_Init("#version 330 core");
 
-    while (!glfwWindowShouldClose(window)) {
+    mustard::App app;
+
+    while (!glfwWindowShouldClose(window) && !app.wantsQuit()) {
         glfwPollEvents();
 
         ImGui_ImplOpenGL3_NewFrame();
@@ -65,7 +69,8 @@ int main() {
         ImGui::NewFrame();
 
         ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
-        ImGui::ShowDemoWindow();
+        app.tick(ImGui::GetIO().DeltaTime);
+        app.draw();
 
         ImGui::Render();
         int fb_w, fb_h;
