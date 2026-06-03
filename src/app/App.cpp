@@ -1,11 +1,14 @@
 #include "mustard/app/App.h"
 #include "mustard/data/events/IITDatalogStream.h"
 
+#include "ImGuiFileDialog.h"
 #include "imgui.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <string>
 
@@ -13,7 +16,9 @@ namespace mustard {
 
 App::App()
     : time_ctrl_(std::make_shared<TimeController>())
-{}
+{
+    loadRecentPaths();
+}
 
 void App::tick(double dt) {
     time_ctrl_->tick(dt);
@@ -21,7 +26,7 @@ void App::tick(double dt) {
 
 void App::draw() {
     drawMenuBar();
-    drawOpenFolderModal();
+    drawFileDialog();
 
     if (!viewers_.empty()) {
         const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -77,8 +82,29 @@ void App::draw() {
 void App::drawMenuBar() {
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("File")) {
-            if (ImGui::MenuItem("Open Folder\xe2\x80\xa6", "Ctrl+O")) {
-                show_open_dialog_ = true;
+            if (ImGui::MenuItem("Open File\xe2\x80\xa6", "Ctrl+O")) {
+                show_open_file_dialog_ = true;
+            }
+            if (ImGui::MenuItem("Open Folder\xe2\x80\xa6", "Ctrl+Shift+O")) {
+                show_open_folder_dialog_ = true;
+            }
+            if (ImGui::BeginMenu("Open Recent", !recent_paths_.empty())) {
+                for (const auto& p : recent_paths_) {
+                    if (ImGui::MenuItem(p.c_str())) {
+                        namespace fs = std::filesystem;
+                        std::error_code ec;
+                        if (fs::is_directory(p, ec) && !ec)
+                            openFolder(p);
+                        else
+                            openSingleFile(p);
+                    }
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Clear Recent")) {
+                    recent_paths_.clear();
+                    saveRecentPaths();
+                }
+                ImGui::EndMenu();
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Quit")) {
@@ -95,44 +121,66 @@ void App::drawMenuBar() {
         ImGui::EndMainMenuBar();
     }
 
-    // Ctrl+O shortcut
+    // Ctrl+O / Ctrl+Shift+O shortcuts
     const ImGuiIO& io = ImGui::GetIO();
-    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O, /*repeat=*/false)) {
-        show_open_dialog_ = true;
+    if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_O, /*repeat=*/false)) {
+        show_open_file_dialog_ = true;
+    }
+    if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_O, /*repeat=*/false)) {
+        show_open_folder_dialog_ = true;
     }
 }
 
 // ---------------------------------------------------------------------------
-// Private — open-folder dialog
+// Private — file/folder browser dialog
 // ---------------------------------------------------------------------------
 
-void App::drawOpenFolderModal() {
-    if (show_open_dialog_) {
-        ImGui::OpenPopup("Open Folder");
-        show_open_dialog_ = false;
+void App::drawFileDialog() {
+    // Compute a sensible starting directory from the most recent path.
+    auto initialPath = [&]() -> std::string {
+        if (!recent_paths_.empty()) {
+            namespace fs = std::filesystem;
+            fs::path rp(recent_paths_.front());
+            std::error_code ec;
+            return (fs::is_directory(rp, ec) && !ec)
+                       ? rp.string()
+                       : rp.parent_path().string();
+        }
+        return ".";
+    };
+
+    // Open file dialog — shows all files, double-clicking a file selects it.
+    if (show_open_file_dialog_) {
+        ImGuiFileDialog::Instance()->OpenDialog(
+            "OpenFileDlg", "Open File", ".*",
+            initialPath(), "", 1, nullptr, ImGuiFileDialogFlags_Modal);
+        show_open_file_dialog_ = false;
+    }
+    ImGui::SetNextWindowSize({700.f, 450.f}, ImGuiCond_Appearing);
+    if (ImGuiFileDialog::Instance()->Display(
+            "OpenFileDlg", ImGuiWindowFlags_NoCollapse)) {
+        if (ImGuiFileDialog::Instance()->IsOk()) {
+            openSingleFile(ImGuiFileDialog::Instance()->GetFilePathName());
+        }
+        ImGuiFileDialog::Instance()->Close();
     }
 
-    ImGui::SetNextWindowSize({620, 105}, ImGuiCond_Always);
-    if (ImGui::BeginPopupModal("Open Folder", nullptr, ImGuiWindowFlags_NoResize)) {
-        ImGui::Text("Folder path:");
-        ImGui::SetNextItemWidth(-1.f);
-        const bool enter = ImGui::InputText(
-            "##path", folder_path_buf_, sizeof(folder_path_buf_),
-            ImGuiInputTextFlags_EnterReturnsTrue);
-
-        ImGui::Spacing();
-        const bool open_clicked = ImGui::Button("Open", {120, 0});
-        ImGui::SameLine();
-        const bool cancel = ImGui::Button("Cancel", {120, 0});
-
-        if ((open_clicked || enter) && folder_path_buf_[0] != '\0') {
-            openFolder(folder_path_buf_);
-            ImGui::CloseCurrentPopup();
-        } else if (cancel) {
-            ImGui::CloseCurrentPopup();
+    // Open folder dialog — filter nullptr shows only directories.
+    if (show_open_folder_dialog_) {
+        ImGuiFileDialog::Instance()->OpenDialog(
+            "OpenFolderDlg", "Open Folder", nullptr,
+            initialPath(), "", 1, nullptr, ImGuiFileDialogFlags_Modal);
+        show_open_folder_dialog_ = false;
+    }
+    ImGui::SetNextWindowSize({700.f, 450.f}, ImGuiCond_Appearing);
+    if (ImGuiFileDialog::Instance()->Display(
+            "OpenFolderDlg", ImGuiWindowFlags_NoCollapse)) {
+        if (ImGuiFileDialog::Instance()->IsOk()) {
+            std::string sel = ImGuiFileDialog::Instance()->GetFilePathName();
+            if (sel.empty()) sel = ImGuiFileDialog::Instance()->GetCurrentPath();
+            openFolder(sel.empty() ? "." : sel);
         }
-
-        ImGui::EndPopup();
+        ImGuiFileDialog::Instance()->Close();
     }
 }
 
@@ -147,9 +195,6 @@ void App::drawPlaybackPanel() {
         ImGuiCond_Always);
     ImGui::SetNextWindowSize({vp->WorkSize.x, 55.f}, ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.88f);
-    // Force the playback bar to the front of the draw stack every frame so
-    // viewer windows can never render on top of it.
-    ImGui::SetNextWindowFocus();
 
     constexpr ImGuiWindowFlags kFlags =
         ImGuiWindowFlags_NoTitleBar     | ImGuiWindowFlags_NoResize  |
@@ -259,6 +304,7 @@ void App::openFolder(const std::string& path) {
     time_ctrl_->setRange(global_start, global_end);
     time_ctrl_->seekTo(global_start);
 
+    addRecentPath(path);
     status_message_ = std::to_string(found) + " stream(s) opened";
     layout_pending_ = true;
 }
@@ -267,6 +313,87 @@ bool App::isIITDatalogCandidate(const std::string& filepath) {
     namespace fs = std::filesystem;
     const fs::path p(filepath);
     return p.extension() == ".log";
+}
+
+// ---------------------------------------------------------------------------
+// Private — open a single data file directly
+// ---------------------------------------------------------------------------
+
+void App::openSingleFile(const std::string& filepath) {
+    viewers_.clear();
+    time_ctrl_ = std::make_shared<TimeController>();
+    status_message_.clear();
+
+    auto stream = std::make_shared<IITDatalogStream>();
+    if (!stream->open(filepath)) {
+        status_message_ = "Failed to open: " + filepath;
+        return;
+    }
+    if (stream->sensorWidth()  <= 0 ||
+        stream->sensorHeight() <= 0 ||
+        stream->startTime()    >= stream->endTime()) {
+        status_message_ = "Invalid stream: " + filepath;
+        return;
+    }
+
+    namespace fs = std::filesystem;
+    const std::string label = fs::path(filepath).filename().string() + "##v1";
+    const int64_t t_start   = stream->startTime();
+    const int64_t t_end     = stream->endTime();
+
+    auto panel = std::make_unique<DVSViewerPanel>(stream, label);
+    DVSViewerPanel* raw = panel.get();
+    time_ctrl_->addObserver([raw](int64_t t) { raw->onTimeChanged(t); });
+    viewers_.push_back(std::move(panel));
+
+    time_ctrl_->setRange(t_start, t_end);
+    time_ctrl_->seekTo(t_start);
+
+    addRecentPath(filepath);
+    status_message_ = "Opened: " + fs::path(filepath).filename().string();
+    layout_pending_ = true;
+}
+
+// ---------------------------------------------------------------------------
+// Private — recent paths helpers
+// ---------------------------------------------------------------------------
+
+std::string App::recentPathsFile() {
+    const char* home = std::getenv("HOME");
+    if (!home) return "";
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::path(home) / ".config" / "mustard";
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    return ec ? "" : (dir / "recent.txt").string();
+}
+
+void App::loadRecentPaths() {
+    const std::string f = recentPathsFile();
+    if (f.empty()) return;
+    std::ifstream ifs(f);
+    std::string line;
+    while (std::getline(ifs, line) &&
+           static_cast<int>(recent_paths_.size()) < kMaxRecentPaths) {
+        if (!line.empty()) recent_paths_.push_back(line);
+    }
+}
+
+void App::saveRecentPaths() {
+    const std::string f = recentPathsFile();
+    if (f.empty()) return;
+    std::ofstream ofs(f);
+    for (const auto& p : recent_paths_) ofs << p << '\n';
+}
+
+void App::addRecentPath(const std::string& path) {
+    recent_paths_.erase(
+        std::remove(recent_paths_.begin(), recent_paths_.end(), path),
+        recent_paths_.end());
+    recent_paths_.push_front(path);
+    if (static_cast<int>(recent_paths_.size()) > kMaxRecentPaths)
+        recent_paths_.resize(static_cast<std::size_t>(kMaxRecentPaths));
+    saveRecentPaths();
 }
 
 } // namespace mustard

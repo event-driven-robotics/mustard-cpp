@@ -55,3 +55,24 @@ target_include_directories(imgui PUBLIC
 target_link_libraries(imgui PUBLIC glfw glad)
 # Tell imgui's OpenGL3 backend to use glad2's <glad/gl.h> loader
 target_compile_definitions(imgui PUBLIC IMGUI_IMPL_OPENGL_LOADER_GLAD2)
+
+# ---------------------------------------------------------------------------
+# ImGuiFileDialog — in-process file/folder browser widget
+# ---------------------------------------------------------------------------
+FetchContent_Declare(
+    ImGuiFileDialog
+    GIT_REPOSITORY https://github.com/aiekick/ImGuiFileDialog.git
+    GIT_TAG        v0.6.6
+)
+FetchContent_GetProperties(ImGuiFileDialog)
+if(NOT imguifiledialog_POPULATED)
+    FetchContent_Populate(ImGuiFileDialog)
+endif()
+
+add_library(ImGuiFileDialog STATIC
+    ${imguifiledialog_SOURCE_DIR}/ImGuiFileDialog.cpp
+)
+target_include_directories(ImGuiFileDialog PUBLIC
+    ${imguifiledialog_SOURCE_DIR}
+)
+target_link_libraries(ImGuiFileDialog PUBLIC imgui)

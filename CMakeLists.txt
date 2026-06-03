@@ -40,7 +40,7 @@ add_executable(mustard_app
     src/app/App.cpp
     src/ui/DVSViewerPanel.cpp
 )
-target_link_libraries(mustard_app PRIVATE mustard imgui glfw glad)
+target_link_libraries(mustard_app PRIVATE mustard imgui glfw glad ImGuiFileDialog)
 target_compile_definitions(mustard_app PRIVATE IMGUI_IMPL_OPENGL_LOADER_GLAD2)
 
 # ---------------------------------------------------------------------------

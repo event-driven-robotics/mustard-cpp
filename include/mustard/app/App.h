@@ -2,6 +2,7 @@
 #include "mustard/core/TimeController.h"
 #include "mustard/ui/DVSViewerPanel.h"
 
+#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
@@ -32,22 +33,31 @@ public:
 
 private:
     void drawMenuBar();
-    void drawOpenFolderModal();
+    void drawFileDialog();
     void drawPlaybackPanel();
 
-    /// Recursively scan @p path for iitdatalog files, open each in its own
-    /// IITDatalogStream and create a DVSViewerPanel for it.
+    /// Recursively scan @p path for iitdatalog files and open a panel for each.
     void openFolder(const std::string& path);
+    /// Open a single data file directly (user selected it in the browser).
+    void openSingleFile(const std::string& filepath);
+
+    void addRecentPath(const std::string& path);
+    void loadRecentPaths();
+    void saveRecentPaths();
+    static std::string recentPathsFile();
 
     static bool isIITDatalogCandidate(const std::string& filepath);
 
+    static constexpr int kMaxRecentPaths = 10;
+
     std::shared_ptr<TimeController>              time_ctrl_;
     std::vector<std::unique_ptr<DVSViewerPanel>> viewers_;
+    std::deque<std::string>                      recent_paths_;
 
     bool        wants_quit_{false};
-    bool        show_open_dialog_{false};
+    bool        show_open_file_dialog_{false};
+    bool        show_open_folder_dialog_{false};
     bool        layout_pending_{false};
-    char        folder_path_buf_[4096]{};
     std::string status_message_;
 };
 
