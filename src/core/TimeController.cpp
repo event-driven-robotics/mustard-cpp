@@ -11,11 +11,8 @@ void TimeController::setRange(int64_t start, int64_t end) {
 }
 
 void TimeController::seekTo(int64_t t) {
-    int64_t clamped = std::clamp(t, start_time_, end_time_);
-    if (clamped != current_time_) {
-        current_time_ = clamped;
-        notifyObservers();
-    }
+    current_time_ = std::clamp(t, start_time_, end_time_);
+    notifyObservers();
 }
 
 void TimeController::setPlaying(bool playing) {

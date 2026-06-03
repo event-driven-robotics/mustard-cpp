@@ -24,8 +24,6 @@ void App::draw() {
     drawOpenFolderModal();
 
     if (!viewers_.empty()) {
-        drawPlaybackPanel();
-
         const ImGuiViewport* vp = ImGui::GetMainViewport();
         const int   n    = static_cast<int>(viewers_.size());
         const int   cols = std::max(1, static_cast<int>(
@@ -49,6 +47,9 @@ void App::draw() {
         }
 
         layout_pending_ = false;
+
+        // Draw playback panel last so it renders on top of viewer windows.
+        drawPlaybackPanel();
 
     } else {
         // Welcome overlay shown when no dataset is loaded
@@ -146,12 +147,14 @@ void App::drawPlaybackPanel() {
         ImGuiCond_Always);
     ImGui::SetNextWindowSize({vp->WorkSize.x, 55.f}, ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.88f);
+    // Force the playback bar to the front of the draw stack every frame so
+    // viewer windows can never render on top of it.
+    ImGui::SetNextWindowFocus();
 
     constexpr ImGuiWindowFlags kFlags =
         ImGuiWindowFlags_NoTitleBar     | ImGuiWindowFlags_NoResize  |
         ImGuiWindowFlags_NoMove         | ImGuiWindowFlags_NoScrollbar |
-        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus |
-        ImGuiWindowFlags_NoDocking;
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking;
 
     ImGui::Begin("##playback", nullptr, kFlags);
 
