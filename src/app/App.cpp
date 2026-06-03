@@ -1,4 +1,6 @@
 #include "mustard/app/App.h"
+#include "mustard/ui/DVSViewerPanel.h"
+#include "mustard/ui/RGBVideoPanel.h"
 #include "mustard/data/events/IITDatalogStream.h"
 
 #include "ImGuiFileDialog.h"
@@ -34,7 +36,7 @@ void App::draw() {
         const int   cols = std::max(1, static_cast<int>(
                                std::ceil(std::sqrt(static_cast<double>(n)))));
         const int   rows = (n + cols - 1) / cols;
-        const float playback_h = 80.f;
+        const float playback_h = 48.f;
         const float pw = vp->WorkSize.x / static_cast<float>(cols);
         const float ph = (vp->WorkSize.y - playback_h) / static_cast<float>(rows);
 
@@ -200,11 +202,12 @@ void App::drawFileDialog() {
 // ---------------------------------------------------------------------------
 
 void App::drawPlaybackPanel() {
+    constexpr float kPanelH = 48.f;
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(
-        {vp->WorkPos.x, vp->WorkPos.y + vp->WorkSize.y - 80.f},
+        {vp->WorkPos.x, vp->WorkPos.y + vp->WorkSize.y - kPanelH},
         ImGuiCond_Always);
-    ImGui::SetNextWindowSize({vp->WorkSize.x, 80.f}, ImGuiCond_Always);
+    ImGui::SetNextWindowSize({vp->WorkSize.x, kPanelH}, ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.88f);
 
     constexpr ImGuiWindowFlags kFlags =
@@ -247,27 +250,12 @@ void App::drawPlaybackPanel() {
 
     ImGui::SameLine();
 
-    // Close / quit button at the far right of row 1
+    // Quit button at the far right
     ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - 26.f);
-    if (ImGui::Button("\xc3\x97##quit", {26.f, 0.f})) {   // UTF-8 × (U+00D7)
+    if (ImGui::Button("\xc3\x97##quit", {26.f, 0.f})) {
         wants_quit_ = true;
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Quit");
-
-    // Row 2: accumulation window slider
-    ImGui::SetNextItemWidth(120.f);
-    ImGui::TextUnformatted("Accum window:");
-    ImGui::SameLine();
-    float accum_ms = static_cast<float>(accum_window_us_) / 1000.f;
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80.f);
-    if (ImGui::SliderFloat("##accum", &accum_ms, 0.5f, 500.f, "%.1f ms",
-                           ImGuiSliderFlags_Logarithmic)) {
-        accum_window_us_ = static_cast<int64_t>(accum_ms * 1000.f);
-        for (auto& v : viewers_) {
-            v->setAccumWindow(accum_window_us_);
-            v->onTimeChanged(time_ctrl_->currentTime());
-        }
-    }
 
     ImGui::End();
 }
@@ -301,38 +289,70 @@ void App::openFolder(const std::string& path) {
         if (!entry.is_regular_file(ec)) continue;
 
         const std::string fpath = entry.path().string();
-        if (!isIITDatalogCandidate(fpath)) continue;
 
-        auto stream = std::make_shared<IITDatalogStream>();
-        if (!stream->open(fpath)) continue;
-        if (stream->sensorWidth()  <= 0 ||
-            stream->sensorHeight() <= 0 ||
-            stream->startTime()    >= stream->endTime()) continue;
+        if (isIITDatalogCandidate(fpath)) {
+            auto stream = std::make_shared<IITDatalogStream>();
+            if (!stream->open(fpath)) continue;
+            if (stream->sensorWidth()  <= 0 ||
+                stream->sensorHeight() <= 0 ||
+                stream->startTime()    >= stream->endTime()) continue;
+
+            ++found;
+            global_start = std::min(global_start, stream->startTime());
+            global_end   = std::max(global_end,   stream->endTime());
+
+            // Build a display label from the path relative to the root folder
+            fs::path rel = fs::relative(entry.path(), fs::path(path), ec);
+            const std::string display = ec ? entry.path().filename().string()
+                                           : rel.string();
+            const std::string label = display + "##v" + std::to_string(found);
+
+            auto panel = std::make_unique<DVSViewerPanel>(stream, label);
+            // Register observer — raw pointer is valid as long as viewers_ is alive,
+            // which outlives the time_ctrl_ that holds these lambdas.
+            ViewerPanel* raw = panel.get();
+            time_ctrl_->addObserver([raw](int64_t t) { raw->onTimeChanged(t); });
+            viewers_.push_back(std::move(panel));
+        }
+    }
+
+    // Second pass: add MP4 video panels aligned to the event time range.
+    // If no events were found, videos start at t=0 and set the range themselves.
+    const bool events_found = (global_start != std::numeric_limits<int64_t>::max());
+    const int64_t video_offset = events_found ? global_start : 0;
+    if (!events_found) {
+        global_start = std::numeric_limits<int64_t>::max();
+        global_end   = std::numeric_limits<int64_t>::min();
+    }
+
+    for (const auto& entry2 :
+         fs::recursive_directory_iterator(path,
+             fs::directory_options::skip_permission_denied, ec))
+    {
+        if (ec) { ec.clear(); continue; }
+        if (!entry2.is_regular_file(ec)) continue;
+        if (!isMp4Candidate(entry2.path().string())) continue;
 
         ++found;
-        global_start = std::min(global_start, stream->startTime());
-        global_end   = std::max(global_end,   stream->endTime());
-
-        // Build a display label from the path relative to the root folder
-        fs::path rel = fs::relative(entry.path(), fs::path(path), ec);
-        const std::string display = ec ? entry.path().filename().string()
+        fs::path rel = fs::relative(entry2.path(), fs::path(path), ec);
+        const std::string display = ec ? entry2.path().filename().string()
                                        : rel.string();
-        // Append a unique ImGui ID suffix to disambiguate windows with the
-        // same display text (e.g., two "data.log" files in different subdirs)
         const std::string label = display + "##v" + std::to_string(found);
 
-        auto panel = std::make_unique<DVSViewerPanel>(stream, label);
+        auto panel = std::make_unique<RGBVideoPanel>(
+            entry2.path().string(), label, video_offset);
+        if (!panel->isLoaded()) { --found; continue; }
 
-        // Register observer — raw pointer is valid as long as viewers_ is alive,
-        // which outlives the time_ctrl_ that holds these lambdas.
-        DVSViewerPanel* raw = panel.get();
+        global_start = std::min(global_start, video_offset);
+        global_end   = std::max(global_end,   video_offset + panel->durationUs());
+
+        ViewerPanel* raw = panel.get();
         time_ctrl_->addObserver([raw](int64_t t) { raw->onTimeChanged(t); });
-
         viewers_.push_back(std::move(panel));
     }
 
     if (found == 0) {
-        status_message_ = "No iitdatalog streams found in: " + path;
+        status_message_ = "No supported streams found in: " + path;
         return;
     }
 
@@ -350,6 +370,14 @@ bool App::isIITDatalogCandidate(const std::string& filepath) {
     return p.extension() == ".log";
 }
 
+bool App::isMp4Candidate(const std::string& filepath) {
+    namespace fs = std::filesystem;
+    const fs::path p(filepath);
+    const auto ext = p.extension().string();
+    // Accept common video container extensions FFmpeg can decode
+    return ext == ".mp4" || ext == ".MP4" || ext == ".mkv" || ext == ".avi";
+}
+
 // ---------------------------------------------------------------------------
 // Private — open a single data file directly
 // ---------------------------------------------------------------------------
@@ -359,6 +387,28 @@ void App::openSingleFile(const std::string& filepath) {
     time_ctrl_ = std::make_shared<TimeController>();
     status_message_.clear();
 
+    namespace fs = std::filesystem;
+    const std::string label = fs::path(filepath).filename().string() + "##v1";
+
+    if (isMp4Candidate(filepath)) {
+        auto panel = std::make_unique<RGBVideoPanel>(filepath, label, 0);
+        if (!panel->isLoaded()) {
+            status_message_ = "Failed to open video: " + filepath;
+            return;
+        }
+        const int64_t dur = panel->durationUs();
+        ViewerPanel* raw = panel.get();
+        time_ctrl_->addObserver([raw](int64_t t) { raw->onTimeChanged(t); });
+        viewers_.push_back(std::move(panel));
+        time_ctrl_->setRange(0, dur);
+        time_ctrl_->seekTo(0);
+        addRecentPath(filepath);
+        status_message_ = "Opened: " + fs::path(filepath).filename().string();
+        layout_pending_ = true;
+        return;
+    }
+
+    // Fall through to event stream handling
     auto stream = std::make_shared<IITDatalogStream>();
     if (!stream->open(filepath)) {
         status_message_ = "Failed to open: " + filepath;
@@ -371,13 +421,11 @@ void App::openSingleFile(const std::string& filepath) {
         return;
     }
 
-    namespace fs = std::filesystem;
-    const std::string label = fs::path(filepath).filename().string() + "##v1";
-    const int64_t t_start   = stream->startTime();
-    const int64_t t_end     = stream->endTime();
+    const int64_t t_start = stream->startTime();
+    const int64_t t_end   = stream->endTime();
 
     auto panel = std::make_unique<DVSViewerPanel>(stream, label);
-    DVSViewerPanel* raw = panel.get();
+    ViewerPanel* raw = panel.get();
     time_ctrl_->addObserver([raw](int64_t t) { raw->onTimeChanged(t); });
     viewers_.push_back(std::move(panel));
 

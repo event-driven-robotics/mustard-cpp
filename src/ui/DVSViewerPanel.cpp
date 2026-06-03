@@ -9,7 +9,7 @@ namespace mustard {
 
 DVSViewerPanel::DVSViewerPanel(std::shared_ptr<IITDatalogStream> stream,
                                std::string                        label)
-    : stream_(std::move(stream)), label_(std::move(label))
+    : ViewerPanel(std::move(label)), stream_(std::move(stream))
 {}
 
 DVSViewerPanel::~DVSViewerPanel() {
@@ -69,6 +69,17 @@ void DVSViewerPanel::draw() {
             last_time_ = -1;
             onTimeChanged(cur);
         }
+    }
+
+    ImGui::SameLine();
+    ImGui::TextUnformatted("Accum:");
+    ImGui::SameLine();
+    float accum_ms = static_cast<float>(accum_window_us_) / 1000.f;
+    ImGui::SetNextItemWidth(120.f);
+    if (ImGui::SliderFloat("##accum", &accum_ms, 0.5f, 500.f, "%.1f ms",
+                           ImGuiSliderFlags_Logarithmic)) {
+        setAccumWindow(static_cast<int64_t>(accum_ms * 1000.f));
+        if (last_time_ >= 0) onTimeChanged(last_time_);
     }
 
     // img_origin / img_scale are set inside the texture-valid branch so that

@@ -9,6 +9,18 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 include(cmake/FetchDependencies.cmake)
 
 # ---------------------------------------------------------------------------
+# FFmpeg — system libraries (Ubuntu: libavcodec-dev etc.)
+# .pc files may be empty on some Ubuntu images; use find_library directly.
+# ---------------------------------------------------------------------------
+find_path(FFMPEG_INCLUDE_DIR libavcodec/avcodec.h
+    PATHS /usr/include /usr/include/x86_64-linux-gnu
+    REQUIRED)
+find_library(AVCODEC_LIB  avcodec  REQUIRED)
+find_library(AVFORMAT_LIB avformat REQUIRED)
+find_library(AVUTIL_LIB   avutil   REQUIRED)
+find_library(SWSCALE_LIB  swscale  REQUIRED)
+
+# ---------------------------------------------------------------------------
 # glad — vendored pre-generated for OpenGL 3.3 core (no Python required)
 # ---------------------------------------------------------------------------
 add_library(glad STATIC third_party/glad/src/gl.c)
@@ -39,9 +51,16 @@ add_executable(mustard_app
     src/app/main.cpp
     src/app/App.cpp
     src/ui/DVSViewerPanel.cpp
+    src/ui/RGBVideoPanel.cpp
 )
-target_link_libraries(mustard_app PRIVATE mustard imgui glfw glad ImGuiFileDialog)
+target_include_directories(mustard_app PRIVATE ${FFMPEG_INCLUDE_DIR})
+target_link_libraries(mustard_app PRIVATE mustard imgui glfw glad ImGuiFileDialog
+    ${AVCODEC_LIB} ${AVFORMAT_LIB} ${AVUTIL_LIB} ${SWSCALE_LIB})
 target_compile_definitions(mustard_app PRIVATE IMGUI_IMPL_OPENGL_LOADER_GLAD2)
+# In devcontainer many optional FFmpeg codec plugin libs are empty stubs.
+# Allow unresolved transitive shared-library symbols at link time so the
+# binary still builds; the missing codecs simply won't be available at runtime.
+target_link_options(mustard_app PRIVATE -Wl,--allow-shlib-undefined)
 
 # ---------------------------------------------------------------------------
 # Tests

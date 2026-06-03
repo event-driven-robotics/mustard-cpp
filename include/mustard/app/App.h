@@ -1,6 +1,6 @@
 #pragma once
 #include "mustard/core/TimeController.h"
-#include "mustard/ui/DVSViewerPanel.h"
+#include "mustard/ui/ViewerPanel.h"
 
 #include <deque>
 #include <memory>
@@ -47,18 +47,18 @@ private:
     static std::string recentPathsFile();
 
     static bool isIITDatalogCandidate(const std::string& filepath);
+    static bool isMp4Candidate(const std::string& filepath);
 
     static constexpr int kMaxRecentPaths = 10;
 
-    std::shared_ptr<TimeController>              time_ctrl_;
-    std::vector<std::unique_ptr<DVSViewerPanel>> viewers_;
-    std::deque<std::string>                      recent_paths_;
+    std::shared_ptr<TimeController>             time_ctrl_;
+    std::vector<std::unique_ptr<ViewerPanel>>   viewers_;
+    std::deque<std::string>                     recent_paths_;
 
     bool        wants_quit_{false};
     bool        show_open_file_dialog_{false};
     bool        show_open_folder_dialog_{false};
     bool        layout_pending_{false};
-    int64_t     accum_window_us_{33'333};
     std::string status_message_;
 };
 

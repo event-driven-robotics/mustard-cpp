@@ -1,4 +1,5 @@
 #pragma once
+#include "mustard/ui/ViewerPanel.h"
 #include "mustard/annotation/AnnotationStore.h"
 #include "mustard/data/events/IITDatalogStream.h"
 
@@ -23,7 +24,7 @@ namespace mustard {
 ///
 /// When an AnnotationStore is attached and mode is kDrawBBox the user can
 /// interactively drag a bounding box onto the sensor image.
-class DVSViewerPanel {
+class DVSViewerPanel : public ViewerPanel {
 public:
     /// Rolling accumulation window in microseconds (~33 ms ≈ 30 fps).
     static constexpr int64_t kAccumWindowUs = 33'333;
@@ -52,14 +53,12 @@ public:
     DVSViewerPanel& operator=(DVSViewerPanel&&)      = default;
 
     /// Called by the TimeController observer; repaints the event texture.
-    void onTimeChanged(int64_t t);
+    void onTimeChanged(int64_t t) override;
 
     /// Draw this panel as a standalone ImGui window.
-    void draw();
+    void draw() override;
 
-    const std::string& label()  const noexcept { return label_; }
-    /// Returns false after the user clicks the window's close (✕) button.
-    bool               isOpen() const noexcept { return open_; }
+    // label() and isOpen() are inherited from ViewerPanel.
 
     // ------------------------------------------------------------------
     // Annotation API
@@ -91,7 +90,6 @@ private:
     void renderTernaryImage(int64_t ct_start, int64_t accum_t0, int64_t t_now);
 
     std::shared_ptr<IITDatalogStream> stream_;
-    std::string                        label_;
 
     GLuint               texture_id_{0};
     int                  tex_w_{0};
@@ -110,7 +108,6 @@ private:
     InteractionMode                  mode_{InteractionMode::kObserve};
     ImVec2                           drag_start_{0.f, 0.f};
     bool                             dragging_{false};
-    bool                             open_{true};
 };
 
 } // namespace mustard
