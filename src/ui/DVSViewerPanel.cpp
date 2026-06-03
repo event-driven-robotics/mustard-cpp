@@ -29,33 +29,46 @@ void DVSViewerPanel::onTimeChanged(int64_t t) {
     if (w <= 0 || h <= 0) return;
 
     ensureTexture(w, h);
-    clearPixels();
 
     // Accumulation window: clamp start to stream's beginning
-    const int64_t accum_t0 = std::max(stream_->startTime(), t - kAccumWindowUs);
+    const int64_t accum_t0  = std::max(stream_->startTime(), t - accum_window_us_);
     const int64_t chunk_dur = IITDatalogStream::kChunkDurationUs;
+    const int64_t ct_start  = (accum_t0 / chunk_dur) * chunk_dur;
 
-    // First aligned chunk boundary at or before accum_t0
-    const int64_t ct_start = (accum_t0 / chunk_dur) * chunk_dur;
-
-    for (int64_t ct = ct_start; ct <= t; ct += chunk_dur) {
-        auto chunk = stream_->getDataAtTime(ct);
-        if (!chunk) continue;
-        for (const auto& ev : chunk->data) {
-            if (ev.t < accum_t0 || ev.t > t) continue;
-            if (static_cast<int>(ev.x) < w && static_cast<int>(ev.y) < h) {
-                paintEvent(static_cast<int>(ev.x), static_cast<int>(ev.y), ev.polarity);
-            }
-        }
+    switch (rep_mode_) {
+        case RepresentationMode::kHistogram:
+            renderHistogram(ct_start, accum_t0, t);
+            break;
+        case RepresentationMode::kTimeSurface:
+            renderTimeSurface(ct_start, accum_t0, t);
+            break;
+        case RepresentationMode::kTernaryImage:
+            renderTernaryImage(ct_start, accum_t0, t);
+            break;
     }
 
     uploadTexture();
 }
 
 void DVSViewerPanel::draw() {
-    if (!ImGui::Begin(label_.c_str())) {
+    if (!ImGui::Begin(label_.c_str(), &open_)) {
         ImGui::End();
         return;
+    }
+
+    // Representation mode selector
+    static const char* const kRepItems[] = {
+        "Histogram", "Time Surface", "Ternary Image"
+    };
+    int rep_idx = static_cast<int>(rep_mode_);
+    ImGui::SetNextItemWidth(160.f);
+    if (ImGui::Combo("##rep_mode", &rep_idx, kRepItems, 3)) {
+        rep_mode_ = static_cast<RepresentationMode>(rep_idx);
+        if (last_time_ >= 0) {
+            const int64_t cur = last_time_;
+            last_time_ = -1;
+            onTimeChanged(cur);
+        }
     }
 
     // img_origin / img_scale are set inside the texture-valid branch so that
@@ -180,7 +193,10 @@ void DVSViewerPanel::ensureTexture(int w, int h) {
 
     tex_w_ = w;
     tex_h_ = h;
-    pixels_.assign(static_cast<std::size_t>(w * h * 4), 0u);
+    const std::size_t npix = static_cast<std::size_t>(w) * static_cast<std::size_t>(h);
+    pixels_.assign(npix * 4, 0u);
+    aux_surface_.assign(npix, -1.f);
+    aux_polarity_.assign(npix, int8_t{-1});
 
     glGenTextures(1, &texture_id_);
     glBindTexture(GL_TEXTURE_2D, texture_id_);
@@ -206,6 +222,157 @@ void DVSViewerPanel::clearPixels() {
         pixels_[i + 1] = 20;
         pixels_[i + 2] = 20;
         pixels_[i + 3] = 255;
+    }
+}
+
+void DVSViewerPanel::setRepresentationMode(RepresentationMode mode) noexcept {
+    rep_mode_  = mode;
+    last_time_ = -1; // force repaint on next onTimeChanged
+}
+
+DVSViewerPanel::RepresentationMode DVSViewerPanel::representationMode() const noexcept {
+    return rep_mode_;
+}
+
+// ---------------------------------------------------------------------------
+// Render helpers — each implements one RepresentationMode
+// ---------------------------------------------------------------------------
+
+void DVSViewerPanel::renderHistogram(int64_t ct_start, int64_t accum_t0, int64_t t_now) {
+    clearPixels();
+
+    // aux_surface_  reused as ON-count  (index = y*tex_w_+x)
+    // aux_polarity_ reused as OFF-count (stored as int8_t; values clamped to 127)
+    std::fill(aux_surface_.begin(),  aux_surface_.end(),  0.f);
+    std::fill(aux_polarity_.begin(), aux_polarity_.end(), int8_t{0});
+
+    const int64_t chunk_dur = IITDatalogStream::kChunkDurationUs;
+    for (int64_t ct = ct_start; ct <= t_now; ct += chunk_dur) {
+        auto chunk = stream_->getDataAtTime(ct);
+        if (!chunk) continue;
+        for (const auto& ev : chunk->data) {
+            if (ev.t < accum_t0 || ev.t > t_now) continue;
+            if (static_cast<int>(ev.x) >= tex_w_ || static_cast<int>(ev.y) >= tex_h_) continue;
+            const std::size_t idx = static_cast<std::size_t>(ev.y * tex_w_ + ev.x);
+            if (ev.polarity) {
+                aux_surface_[idx]  = std::min(aux_surface_[idx] + 1.f, 65535.f);
+            } else {
+                // use aux_polarity_ for OFF count; widen via unsigned before capping
+                const int off_cnt = static_cast<int>(static_cast<uint8_t>(aux_polarity_[idx]));
+                aux_polarity_[idx] = static_cast<int8_t>(std::min(off_cnt + 1, 255));
+            }
+        }
+    }
+
+    // Find max total count for normalisation
+    float max_total = 1.f;
+    for (int y = 0; y < tex_h_; ++y) {
+        for (int x = 0; x < tex_w_; ++x) {
+            const std::size_t idx   = static_cast<std::size_t>(y * tex_w_ + x);
+            const float       total = aux_surface_[idx]
+                + static_cast<float>(static_cast<uint8_t>(aux_polarity_[idx]));
+            if (total > max_total) max_total = total;
+        }
+    }
+
+    const float inv_max = 1.f / max_total;
+
+    for (int y = 0; y < tex_h_; ++y) {
+        for (int x = 0; x < tex_w_; ++x) {
+            const std::size_t idx      = static_cast<std::size_t>(y * tex_w_ + x);
+            const float       on_cnt   = aux_surface_[idx];
+            const float       off_cnt  = static_cast<float>(static_cast<uint8_t>(aux_polarity_[idx]));
+            const float       total    = on_cnt + off_cnt;
+            if (total < 0.5f) continue; // background stays
+
+            const auto        br       = static_cast<uint8_t>(std::min(total * inv_max, 1.f) * 255.f);
+            const std::size_t pix      = idx * 4;
+            if (on_cnt >= off_cnt) {
+                // ON dominant (or tie) → green
+                pixels_[pix + 0] = 0;   pixels_[pix + 1] = br;  pixels_[pix + 2] = 0;
+            } else {
+                // OFF dominant → red
+                pixels_[pix + 0] = br;  pixels_[pix + 1] = 0;   pixels_[pix + 2] = 0;
+            }
+            pixels_[pix + 3] = 255;
+        }
+    }
+}
+
+void DVSViewerPanel::renderTimeSurface(int64_t ct_start, int64_t accum_t0, int64_t t_now) {
+    clearPixels();
+    std::fill(aux_surface_.begin(),  aux_surface_.end(),  -1.f);
+    std::fill(aux_polarity_.begin(), aux_polarity_.end(), int8_t{-1});
+
+    const int64_t span     = t_now - accum_t0;
+    const float   inv_span = (span > 0) ? 1.f / static_cast<float>(span) : 1.f;
+    const int64_t chunk_dur = IITDatalogStream::kChunkDurationUs;
+
+    for (int64_t ct = ct_start; ct <= t_now; ct += chunk_dur) {
+        auto chunk = stream_->getDataAtTime(ct);
+        if (!chunk) continue;
+        for (const auto& ev : chunk->data) {
+            if (ev.t < accum_t0 || ev.t > t_now) continue;
+            if (static_cast<int>(ev.x) >= tex_w_ || static_cast<int>(ev.y) >= tex_h_) continue;
+            const std::size_t idx    = static_cast<std::size_t>(ev.y * tex_w_ + ev.x);
+            const float       norm_t = static_cast<float>(ev.t - accum_t0) * inv_span;
+            if (norm_t > aux_surface_[idx]) {
+                aux_surface_[idx]  = norm_t;
+                aux_polarity_[idx] = ev.polarity ? int8_t{1} : int8_t{0};
+            }
+        }
+    }
+
+    for (int y = 0; y < tex_h_; ++y) {
+        for (int x = 0; x < tex_w_; ++x) {
+            const std::size_t aux = static_cast<std::size_t>(y * tex_w_ + x);
+            if (aux_surface_[aux] < 0.f) continue; // background stays
+            const auto        br  = static_cast<uint8_t>(std::min(255.f, aux_surface_[aux] * 255.f));
+            const std::size_t pix = aux * 4;
+            if (aux_polarity_[aux] == int8_t{1}) {
+                pixels_[pix + 0] = 0;   pixels_[pix + 1] = br;  pixels_[pix + 2] = 0;
+            } else {
+                pixels_[pix + 0] = br;  pixels_[pix + 1] = 0;   pixels_[pix + 2] = 0;
+            }
+            pixels_[pix + 3] = 255;
+        }
+    }
+}
+
+void DVSViewerPanel::renderTernaryImage(int64_t ct_start, int64_t accum_t0, int64_t t_now) {
+    // Background: 50% grey
+    for (std::size_t i = 0; i < pixels_.size(); i += 4) {
+        pixels_[i + 0] = 128; pixels_[i + 1] = 128;
+        pixels_[i + 2] = 128; pixels_[i + 3] = 255;
+    }
+    std::fill(aux_polarity_.begin(), aux_polarity_.end(), int8_t{-1});
+
+    const int64_t chunk_dur = IITDatalogStream::kChunkDurationUs;
+    for (int64_t ct = ct_start; ct <= t_now; ct += chunk_dur) {
+        auto chunk = stream_->getDataAtTime(ct);
+        if (!chunk) continue;
+        for (const auto& ev : chunk->data) {
+            if (ev.t < accum_t0 || ev.t > t_now) continue;
+            if (static_cast<int>(ev.x) >= tex_w_ || static_cast<int>(ev.y) >= tex_h_) continue;
+            const std::size_t idx = static_cast<std::size_t>(ev.y * tex_w_ + ev.x);
+            aux_polarity_[idx] = ev.polarity ? int8_t{1} : int8_t{0};
+        }
+    }
+
+    for (int y = 0; y < tex_h_; ++y) {
+        for (int x = 0; x < tex_w_; ++x) {
+            const std::size_t aux = static_cast<std::size_t>(y * tex_w_ + x);
+            if (aux_polarity_[aux] < int8_t{0}) continue; // grey stays
+            const std::size_t pix = aux * 4;
+            if (aux_polarity_[aux] == int8_t{1}) {
+                // ON → white
+                pixels_[pix + 0] = 255; pixels_[pix + 1] = 255; pixels_[pix + 2] = 255;
+            } else {
+                // OFF → black
+                pixels_[pix + 0] = 0;   pixels_[pix + 1] = 0;   pixels_[pix + 2] = 0;
+            }
+            pixels_[pix + 3] = 255;
+        }
     }
 }
 

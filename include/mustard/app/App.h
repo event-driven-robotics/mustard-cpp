@@ -58,6 +58,7 @@ private:
     bool        show_open_file_dialog_{false};
     bool        show_open_folder_dialog_{false};
     bool        layout_pending_{false};
+    int64_t     accum_window_us_{33'333};
     std::string status_message_;
 };
 

@@ -34,7 +34,7 @@ void App::draw() {
         const int   cols = std::max(1, static_cast<int>(
                                std::ceil(std::sqrt(static_cast<double>(n)))));
         const int   rows = (n + cols - 1) / cols;
-        const float playback_h = 55.f;
+        const float playback_h = 80.f;
         const float pw = vp->WorkSize.x / static_cast<float>(cols);
         const float ph = (vp->WorkSize.y - playback_h) / static_cast<float>(rows);
 
@@ -52,6 +52,12 @@ void App::draw() {
         }
 
         layout_pending_ = false;
+
+        // Remove any panels the user closed this frame.
+        viewers_.erase(
+            std::remove_if(viewers_.begin(), viewers_.end(),
+                           [](const auto& v) { return !v->isOpen(); }),
+            viewers_.end());
 
         // Draw playback panel last so it renders on top of viewer windows.
         drawPlaybackPanel();
@@ -89,8 +95,13 @@ void App::drawMenuBar() {
                 show_open_folder_dialog_ = true;
             }
             if (ImGui::BeginMenu("Open Recent", !recent_paths_.empty())) {
+                int idx = 0;
                 for (const auto& p : recent_paths_) {
-                    if (ImGui::MenuItem(p.c_str())) {
+                    if (p.empty()) { ++idx; continue; }
+                    // Append ##r<n> so ImGui always has a non-empty unique ID
+                    // even if two paths share the same display text.
+                    const std::string item_id = p + "##r" + std::to_string(idx++);
+                    if (ImGui::MenuItem(item_id.c_str())) {
                         namespace fs = std::filesystem;
                         std::error_code ec;
                         if (fs::is_directory(p, ec) && !ec)
@@ -191,9 +202,9 @@ void App::drawFileDialog() {
 void App::drawPlaybackPanel() {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(
-        {vp->WorkPos.x, vp->WorkPos.y + vp->WorkSize.y - 55.f},
+        {vp->WorkPos.x, vp->WorkPos.y + vp->WorkSize.y - 80.f},
         ImGuiCond_Always);
-    ImGui::SetNextWindowSize({vp->WorkSize.x, 55.f}, ImGuiCond_Always);
+    ImGui::SetNextWindowSize({vp->WorkSize.x, 80.f}, ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.88f);
 
     constexpr ImGuiWindowFlags kFlags =
@@ -216,7 +227,7 @@ void App::drawPlaybackPanel() {
     ImGui::SameLine();
 
     // Seek slider (0.0 – 1.0 relative position)
-    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - 130.f);
+    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - 160.f);
     float t_rel = (t_range > 0)
         ? static_cast<float>(time_ctrl_->currentTime() - t_start) /
           static_cast<float>(t_range)
@@ -233,6 +244,30 @@ void App::drawPlaybackPanel() {
     const double cur_s = static_cast<double>(time_ctrl_->currentTime() - t_start) / 1e6;
     const double dur_s = static_cast<double>(t_range) / 1e6;
     ImGui::Text("%.2f / %.2f s", cur_s, dur_s);
+
+    ImGui::SameLine();
+
+    // Close / quit button at the far right of row 1
+    ImGui::SetCursorPosX(ImGui::GetContentRegionMax().x - 26.f);
+    if (ImGui::Button("\xc3\x97##quit", {26.f, 0.f})) {   // UTF-8 × (U+00D7)
+        wants_quit_ = true;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Quit");
+
+    // Row 2: accumulation window slider
+    ImGui::SetNextItemWidth(120.f);
+    ImGui::TextUnformatted("Accum window:");
+    ImGui::SameLine();
+    float accum_ms = static_cast<float>(accum_window_us_) / 1000.f;
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 80.f);
+    if (ImGui::SliderFloat("##accum", &accum_ms, 0.5f, 500.f, "%.1f ms",
+                           ImGuiSliderFlags_Logarithmic)) {
+        accum_window_us_ = static_cast<int64_t>(accum_ms * 1000.f);
+        for (auto& v : viewers_) {
+            v->setAccumWindow(accum_window_us_);
+            v->onTimeChanged(time_ctrl_->currentTime());
+        }
+    }
 
     ImGui::End();
 }
