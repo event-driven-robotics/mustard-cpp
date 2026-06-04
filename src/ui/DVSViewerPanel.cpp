@@ -1,5 +1,4 @@
 #include "mustard/ui/DVSViewerPanel.h"
-#include "mustard/annotation/BoundingBox.h"
 
 #include "imgui.h"
 
@@ -82,6 +81,10 @@ void DVSViewerPanel::draw() {
         if (last_time_ >= 0) onTimeChanged(last_time_);
     }
 
+    // Annotation toolbar (Annotate / Stop / Save)
+    ImGui::SameLine(0.f, 16.f);
+    drawAnnotationControls();
+
     // img_origin / img_scale are set inside the texture-valid branch so that
     // both the interaction logic and annotation overlay rendering use the same
     // values without duplicating the scale computation.
@@ -114,42 +117,7 @@ void DVSViewerPanel::draw() {
 
         ImGui::Image(static_cast<ImTextureID>(texture_id_), ImVec2(dw, dh));
 
-        // ------------------------------------------------------------------
-        // Bounding-box draw mode interaction
-        // ------------------------------------------------------------------
-        if (mode_ == InteractionMode::kDrawBBox && ann_store_) {
-            // Begin drag when the user clicks inside the image
-            if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(0)) {
-                drag_start_ = ImGui::GetMousePos();
-                dragging_   = true;
-            }
-
-            // While dragging, paint a live preview rectangle
-            if (dragging_ && ImGui::IsMouseDown(0)) {
-                const ImVec2 cur = ImGui::GetMousePos();
-                ImGui::GetWindowDrawList()->AddRect(
-                    drag_start_, cur, IM_COL32(255, 200, 0, 180));
-            }
-
-            // On release, commit the finished bounding box to the store
-            if (dragging_ && ImGui::IsMouseReleased(0)) {
-                const ImVec2 cur = ImGui::GetMousePos();
-                if (img_scale > 0.f) {
-                    const float x0 = std::min(drag_start_.x, cur.x);
-                    const float y0 = std::min(drag_start_.y, cur.y);
-                    const float x1 = std::max(drag_start_.x, cur.x);
-                    const float y1 = std::max(drag_start_.y, cur.y);
-                    // Convert from screen space to sensor pixel space
-                    const float bx = (x0 - img_origin.x) / img_scale;
-                    const float by = (y0 - img_origin.y) / img_scale;
-                    const float bw = (x1 - x0)           / img_scale;
-                    const float bh = (y1 - y0)           / img_scale;
-                    ann_store_->add(
-                        std::make_unique<BoundingBox>(last_time_, bx, by, bw, bh));
-                }
-                dragging_ = false;
-            }
-        }
+        drawAnnotationInteraction(img_origin, img_scale, last_time_);
     } else if (stream_ && stream_->isOpen()) {
         ImGui::TextDisabled("Waiting for data…");
     } else {
@@ -159,35 +127,10 @@ void DVSViewerPanel::draw() {
     // ------------------------------------------------------------------
     // Render existing annotations for the current timestamp as overlay
     // ------------------------------------------------------------------
-    if (img_valid && ann_store_) {
-        const auto* anns = ann_store_->queryAt(last_time_);
-        if (anns) {
-            ImDrawList* dl = ImGui::GetWindowDrawList();
-            for (const auto& ann : *anns) {
-                ann->renderOverlay(dl, img_origin, img_scale);
-            }
-        }
-    }
+    if (img_valid)
+        drawAnnotationOverlay(img_origin, img_scale, last_time_);
 
     ImGui::End();
-}
-
-// ---------------------------------------------------------------------------
-// Annotation API
-// ---------------------------------------------------------------------------
-
-void DVSViewerPanel::setAnnotationStore(std::shared_ptr<AnnotationStore> store) {
-    ann_store_ = std::move(store);
-    dragging_  = false; // reset any in-progress drag when the store changes
-}
-
-void DVSViewerPanel::setInteractionMode(InteractionMode mode) noexcept {
-    mode_     = mode;
-    dragging_ = false; // cancel any in-progress drag on mode switch
-}
-
-DVSViewerPanel::InteractionMode DVSViewerPanel::interactionMode() const noexcept {
-    return mode_;
 }
 
 // ---------------------------------------------------------------------------

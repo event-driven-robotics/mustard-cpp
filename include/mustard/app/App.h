@@ -41,7 +41,7 @@ private:
     /// Open a single data file directly (user selected it in the browser).
     void openSingleFile(const std::string& filepath);
 
-    void addRecentPath(const std::string& path);
+    void addRecentPath(const std::string path);
     void loadRecentPaths();
     void saveRecentPaths();
     static std::string recentPathsFile();

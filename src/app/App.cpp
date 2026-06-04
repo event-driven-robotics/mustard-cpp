@@ -1,4 +1,5 @@
 #include "mustard/app/App.h"
+#include "mustard/annotation/AnnotationStore.h"
 #include "mustard/ui/DVSViewerPanel.h"
 #include "mustard/ui/RGBVideoPanel.h"
 #include "mustard/data/events/IITDatalogStream.h"
@@ -308,6 +309,7 @@ void App::openFolder(const std::string& path) {
             const std::string label = display + "##v" + std::to_string(found);
 
             auto panel = std::make_unique<DVSViewerPanel>(stream, label);
+            panel->setAnnotationStore(std::make_shared<AnnotationStore>());
             // Register observer — raw pointer is valid as long as viewers_ is alive,
             // which outlives the time_ctrl_ that holds these lambdas.
             ViewerPanel* raw = panel.get();
@@ -342,6 +344,8 @@ void App::openFolder(const std::string& path) {
         auto panel = std::make_unique<RGBVideoPanel>(
             entry2.path().string(), label, video_offset);
         if (!panel->isLoaded()) { --found; continue; }
+
+        panel->setAnnotationStore(std::make_shared<AnnotationStore>());
 
         global_start = std::min(global_start, video_offset);
         global_end   = std::max(global_end,   video_offset + panel->durationUs());
@@ -396,6 +400,7 @@ void App::openSingleFile(const std::string& filepath) {
             status_message_ = "Failed to open video: " + filepath;
             return;
         }
+        panel->setAnnotationStore(std::make_shared<AnnotationStore>());
         const int64_t dur = panel->durationUs();
         ViewerPanel* raw = panel.get();
         time_ctrl_->addObserver([raw](int64_t t) { raw->onTimeChanged(t); });
@@ -425,6 +430,7 @@ void App::openSingleFile(const std::string& filepath) {
     const int64_t t_end   = stream->endTime();
 
     auto panel = std::make_unique<DVSViewerPanel>(stream, label);
+    panel->setAnnotationStore(std::make_shared<AnnotationStore>());
     ViewerPanel* raw = panel.get();
     time_ctrl_->addObserver([raw](int64_t t) { raw->onTimeChanged(t); });
     viewers_.push_back(std::move(panel));
@@ -469,7 +475,7 @@ void App::saveRecentPaths() {
     for (const auto& p : recent_paths_) ofs << p << '\n';
 }
 
-void App::addRecentPath(const std::string& path) {
+void App::addRecentPath(const std::string path) {
     recent_paths_.erase(
         std::remove(recent_paths_.begin(), recent_paths_.end(), path),
         recent_paths_.end());

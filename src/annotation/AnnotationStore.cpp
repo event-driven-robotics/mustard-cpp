@@ -40,9 +40,30 @@ void AnnotationStore::clear() {
 
 const std::vector<std::unique_ptr<Annotation>>*
 AnnotationStore::queryAt(int64_t t) const {
-    const auto it = annotations_.find(t);
-    if (it == annotations_.end()) return nullptr;
-    return &it->second;
+    if (annotations_.empty()) return nullptr;
+
+    // Return the closest timestamp bucket only if it is within 0.3s.
+    // Assumes timestamps are in microseconds.
+    static constexpr int64_t kMaxDelta = 150'000;
+
+    const auto right = annotations_.lower_bound(t); // first key >= t
+    const auto left = (right == annotations_.begin())
+        ? annotations_.end()
+        : std::prev(right);
+
+    auto absDiff = [](int64_t a, int64_t b) {
+        return (a >= b) ? (a - b) : (b - a);
+    };
+
+    const typename decltype(annotations_)::const_iterator best = [&]() {
+        if (right == annotations_.end()) return left;
+        if (left == annotations_.end()) return right;
+        return (absDiff(right->first, t) < absDiff(left->first, t)) ? right : left;
+    }();
+
+    if (best == annotations_.end()) return nullptr;
+    if (absDiff(best->first, t) >= kMaxDelta) return nullptr;
+    return &best->second;
 }
 
 std::vector<const Annotation*>

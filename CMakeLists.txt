@@ -50,6 +50,7 @@ target_link_libraries(mustard PRIVATE imgui)
 add_executable(mustard_app
     src/app/main.cpp
     src/app/App.cpp
+    src/ui/ViewerPanel.cpp
     src/ui/DVSViewerPanel.cpp
     src/ui/RGBVideoPanel.cpp
 )

@@ -20,8 +20,9 @@ mustard_add_test(test_callback_pipeline test_callback_pipeline.cpp)
 add_executable(test_dvsviewer_panel
     test_dvsviewer_panel.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/DVSViewerPanel.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/ViewerPanel.cpp
 )
-target_link_libraries(test_dvsviewer_panel PRIVATE mustard glad imgui GTest::gtest_main)
+target_link_libraries(test_dvsviewer_panel PRIVATE mustard glad imgui ImGuiFileDialog GTest::gtest_main)
 target_include_directories(test_dvsviewer_panel PRIVATE ${CMAKE_SOURCE_DIR}/include)
 add_test(NAME test_dvsviewer_panel COMMAND test_dvsviewer_panel)
 

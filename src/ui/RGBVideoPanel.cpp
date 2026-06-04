@@ -92,6 +92,8 @@ void RGBVideoPanel::draw() {
         return;
     }
 
+    drawAnnotationControls();
+
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     if (tex_id_ != 0 && tex_w_ > 0 && tex_h_ > 0 &&
         avail.x > 0.f && avail.y > 0.f)
@@ -104,7 +106,12 @@ void RGBVideoPanel::draw() {
         const float off_y = (avail.y - dh) * 0.5f;
         if (off_x > 0.f) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + off_x);
         if (off_y > 0.f) ImGui::SetCursorPosY(ImGui::GetCursorPosY() + off_y);
+
+        const ImVec2 img_origin = ImGui::GetCursorScreenPos();
         ImGui::Image(static_cast<ImTextureID>(tex_id_), ImVec2(dw, dh));
+
+        drawAnnotationInteraction(img_origin, scale, last_time_us_);
+        drawAnnotationOverlay(img_origin, scale, last_time_us_);
     } else {
         ImGui::TextDisabled("Waiting for first frame\xe2\x80\xa6");
     }
