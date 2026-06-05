@@ -8,6 +8,8 @@ RUN apt-get update && apt-get install -y \
     cmake \
     ninja-build \
     git \
+    git-lfs \
+    gdb \
     pkg-config \
     curl \
     # OpenGL — Mesa software renderer (no GPU required)

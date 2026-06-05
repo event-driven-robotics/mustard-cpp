@@ -53,8 +53,9 @@ add_executable(mustard_app
     src/ui/ViewerPanel.cpp
     src/ui/DVSViewerPanel.cpp
     src/ui/RGBVideoPanel.cpp
+    src/ui/ImageListPanel.cpp
 )
-target_include_directories(mustard_app PRIVATE ${FFMPEG_INCLUDE_DIR})
+target_include_directories(mustard_app PRIVATE ${FFMPEG_INCLUDE_DIR} third_party/stb)
 target_link_libraries(mustard_app PRIVATE mustard imgui glfw glad ImGuiFileDialog
     ${AVCODEC_LIB} ${AVFORMAT_LIB} ${AVUTIL_LIB} ${SWSCALE_LIB})
 target_compile_definitions(mustard_app PRIVATE IMGUI_IMPL_OPENGL_LOADER_GLAD2)

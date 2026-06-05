@@ -2,6 +2,7 @@
 #include "mustard/annotation/AnnotationStore.h"
 #include "mustard/ui/DVSViewerPanel.h"
 #include "mustard/ui/RGBVideoPanel.h"
+#include "mustard/ui/ImageListPanel.h"
 #include "mustard/data/events/IITDatalogStream.h"
 
 #include "ImGuiFileDialog.h"
@@ -285,6 +286,41 @@ bool App::isMp4Candidate(const std::string& filepath) {
     return ext == ".mp4" || ext == ".MP4" || ext == ".mkv" || ext == ".avi";
 }
 
+bool App::isImageListCandidate(const std::string& dir_path) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::is_directory(dir_path, ec) || ec) return false;
+    constexpr int kMinImages = 50;
+    int count = 0;
+    for (const auto& entry : fs::directory_iterator(dir_path, ec)) {
+        if (ec) { ec.clear(); continue; }
+        if (!entry.is_regular_file(ec)) { ec.clear(); continue; }
+        const auto ext = entry.path().extension().string();
+        if (ext == ".png" || ext == ".PNG" ||
+            ext == ".jpg" || ext == ".JPG" ||
+            ext == ".jpeg" || ext == ".JPEG") {
+            ++count;
+            if (count > kMinImages) return true;
+        }
+    }
+    return false;
+}
+
+bool App::tryAddImageList(const std::string& dir_path, const std::string& label,
+                          int64_t& t_min, int64_t& t_max) {
+    auto panel = std::make_unique<ImageListPanel>(dir_path, label);
+    if (!panel->isLoaded()) return false;
+
+    panel->setAnnotationStore(std::make_shared<AnnotationStore>());
+    t_min = std::min(t_min, panel->streamStartUs());
+    t_max = std::max(t_max, panel->streamEndUs());
+
+    ImageListPanel* raw = panel.get();
+    time_ctrl_->addObserver([raw](int64_t t) { raw->onTimeChanged(t); });
+    viewers_.push_back(std::move(panel));
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // Private — format-specific panel builders
 // ---------------------------------------------------------------------------
@@ -343,6 +379,8 @@ void App::openSingleFile(const std::string& filepath) {
         ok = tryAddVideo(filepath, label, t_start, t_end);
     else if (isIITDatalogCandidate(filepath))
         ok = tryAddIITDatalog(filepath, label, t_start, t_end);
+    else if (isImageListCandidate(filepath))
+        ok = tryAddImageList(filepath, label, t_start, t_end);
 
     if (!ok) {
         status_message_ = "Failed to open or unsupported format: " + filepath;
@@ -368,14 +406,19 @@ void App::openFolder(const std::string& path) {
     if (!fs::exists(path, ec) || !fs::is_directory(path, ec)) {
         status_message_ = "Not a valid directory: " + path;
         return;
-    }    // Single directory traversal — bucket candidates by format.
-    std::vector<std::string> eventFiles, videoFiles;
+    }
+
+    int64_t t_min = std::numeric_limits<int64_t>::max();
+    int64_t t_max = std::numeric_limits<int64_t>::min();
+
+    openSingleFile(path);
+
+    // Single directory traversal — bucket candidates by format.
     for (const auto& entry :
          fs::recursive_directory_iterator(path,
              fs::directory_options::skip_permission_denied, ec))
     {
         if (ec) { ec.clear(); continue; }
-        if (!entry.is_regular_file(ec)) continue;
         const std::string fp = entry.path().string();
         openSingleFile(fp); // Try to open as a file first (handles mixed content folders)
         

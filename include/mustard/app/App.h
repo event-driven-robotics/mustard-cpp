@@ -57,8 +57,16 @@ private:
     bool tryAddVideo(const std::string& filepath, const std::string& label,
                      int64_t& t_min, int64_t& t_max);
 
+    /// Try to open @p dir_path as an image-list panel and append it.
+    /// Updates @p t_min / @p t_max with the resulting time range.
+    bool tryAddImageList(const std::string& dir_path, const std::string& label,
+                         int64_t& t_min, int64_t& t_max);
+
     static bool isIITDatalogCandidate(const std::string& filepath);
     static bool isMp4Candidate(const std::string& filepath);
+    /// Returns true when @p dir_path is a directory containing more than 50
+    /// PNG/JPG image files (non-recursive scan).
+    static bool isImageListCandidate(const std::string& dir_path);
 
     static constexpr int kMaxRecentPaths = 10;
 
