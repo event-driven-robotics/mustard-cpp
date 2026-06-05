@@ -33,6 +33,7 @@ public:
 
 private:
     void drawMenuBar();
+    void openFileOrFolder(const std::string &p);
     void drawFileDialog();
     void drawPlaybackPanel();
 
@@ -45,6 +46,16 @@ private:
     void loadRecentPaths();
     void saveRecentPaths();
     static std::string recentPathsFile();
+
+    /// Try to open @p filepath as an iitdatalog event stream and append a panel.
+    /// Updates @p t_min / @p t_max with the stream's time range.
+    bool tryAddIITDatalog(const std::string& filepath, const std::string& label,
+                          int64_t& t_min, int64_t& t_max);
+
+    /// Try to open @p filepath as a video and append a panel.
+    /// Updates @p t_min / @p t_max with the resulting time range.
+    bool tryAddVideo(const std::string& filepath, const std::string& label,
+                     int64_t& t_min, int64_t& t_max);
 
     static bool isIITDatalogCandidate(const std::string& filepath);
     static bool isMp4Candidate(const std::string& filepath);

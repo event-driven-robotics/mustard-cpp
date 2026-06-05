@@ -39,9 +39,20 @@ public:
     /// Called by the TimeController observer on every time change.
     virtual void onTimeChanged(int64_t t) = 0;
 
+    /// First timestamp of the underlying data stream in its native time base (µs).
+    virtual int64_t streamStartUs() const noexcept = 0;
+
+    /// Last timestamp of the underlying data stream in its native time base (µs).
+    virtual int64_t streamEndUs() const noexcept = 0;
+
     const std::string& label()  const noexcept { return label_; }
     /// Returns false after the user clicks the window's close (✕) button.
     bool               isOpen() const noexcept { return open_; }
+
+    /// Set the global timeline offset (µs) at which this panel's data begins.
+    /// onTimeChanged receives global time t; the panel converts to stream time as:
+    ///   stream_t = t - start_offset_us + streamStartUs()
+    void setStartOffset(int64_t offset_us) noexcept { start_offset_us_ = offset_us; }
 
     /// Attach an AnnotationStore.  Annotations are rendered as overlays and
     /// can be saved via the toolbar Save button.
@@ -50,6 +61,7 @@ public:
 protected:
     std::string label_;
     bool        open_{true};
+    int64_t     start_offset_us_{0};
 
     // ------------------------------------------------------------------
     // Annotation state — shared across all panel types

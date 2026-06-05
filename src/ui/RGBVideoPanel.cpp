@@ -46,10 +46,8 @@ struct RGBVideoPanel::FFmpegCtx {
 // ---------------------------------------------------------------------------
 
 RGBVideoPanel::RGBVideoPanel(std::string filepath,
-                             std::string label,
-                             int64_t     start_offset_us)
+                             std::string label)
     : ViewerPanel(std::move(label))
-    , start_offset_us_(start_offset_us)
 {
     ff_ = std::make_unique<FFmpegCtx>();
     loaded_ = openVideo(filepath);

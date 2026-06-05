@@ -48,6 +48,9 @@ public:
     /// Draw this panel as a standalone ImGui window.
     void draw() override;
 
+    int64_t streamStartUs() const noexcept override{return stream_->startTime();};
+    int64_t streamEndUs()   const noexcept override{return stream_->endTime();};
+
     // label() and isOpen() are inherited from ViewerPanel.
 
     // ------------------------------------------------------------------

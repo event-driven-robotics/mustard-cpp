@@ -20,19 +20,16 @@ namespace mustard {
 ///
 /// Time mapping
 /// ------------
-/// The panel stores a start_offset_us that maps global time to video time:
-///   video_time_us = global_t - start_offset_us
-/// For a standalone MP4 load the offset is 0 (global range starts at 0).
-/// When mixed with event streams the App passes the event stream's
-/// global_start so the video aligns with the events.
+/// start_offset_us (inherited from ViewerPanel) is the global time (µs) at
+/// which video frame 0 is displayed:
+///   video_time_us = global_t - start_offset_us_
+/// Call setStartOffset() after construction to align with other streams.
 class RGBVideoPanel : public ViewerPanel {
 public:
-    /// @param filepath        Path to the video file.
-    /// @param label           ImGui window title.
-    /// @param start_offset_us Global time (µs) at which the video starts.
+    /// @param filepath  Path to the video file.
+    /// @param label     ImGui window title.
     explicit RGBVideoPanel(std::string filepath,
-                           std::string label,
-                           int64_t     start_offset_us = 0);
+                           std::string label);
     ~RGBVideoPanel() override;
 
     RGBVideoPanel(const RGBVideoPanel&)            = delete;
@@ -43,6 +40,9 @@ public:
 
     void draw()                   override;
     void onTimeChanged(int64_t t) override;
+
+    int64_t streamStartUs() const noexcept override { return 0; }
+    int64_t streamEndUs()   const noexcept override { return duration_us_; }
 
 private:
     bool openVideo(const std::string& filepath);
@@ -60,7 +60,6 @@ private:
     int                  tex_h_{0};
     std::vector<uint8_t> pixels_; ///< RGBA row-major pixel buffer
 
-    int64_t start_offset_us_{0};
     int64_t duration_us_{0};
     int64_t last_time_us_{-1};
     bool    loaded_{false};

@@ -29,20 +29,24 @@ void DVSViewerPanel::onTimeChanged(int64_t t) {
 
     ensureTexture(w, h);
 
+    // Map global time → stream absolute time.
+    // start_offset_us_ is the global time at which this stream begins.
+    const int64_t stream_t = t - start_offset_us_;
+
     // Accumulation window: clamp start to stream's beginning
-    const int64_t accum_t0  = std::max(stream_->startTime(), t - accum_window_us_);
+    const int64_t accum_t0  = std::max(stream_->startTime(), stream_t - accum_window_us_);
     const int64_t chunk_dur = IITDatalogStream::kChunkDurationUs;
     const int64_t ct_start  = (accum_t0 / chunk_dur) * chunk_dur;
 
     switch (rep_mode_) {
         case RepresentationMode::kHistogram:
-            renderHistogram(ct_start, accum_t0, t);
+            renderHistogram(ct_start, accum_t0, stream_t);
             break;
         case RepresentationMode::kTimeSurface:
-            renderTimeSurface(ct_start, accum_t0, t);
+            renderTimeSurface(ct_start, accum_t0, stream_t);
             break;
         case RepresentationMode::kTernaryImage:
-            renderTernaryImage(ct_start, accum_t0, t);
+            renderTernaryImage(ct_start, accum_t0, stream_t);
             break;
     }
 
