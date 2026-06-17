@@ -31,7 +31,7 @@ void DVSViewerPanel::onTimeChanged(int64_t t) {
 
     // Map global time → stream absolute time.
     // start_offset_us_ is the global time at which this stream begins.
-    const int64_t stream_t = t - start_offset_us_;
+    const int64_t stream_t = t - start_offset_us_ + stream_->startTime();
 
     // Accumulation window: clamp start to stream's beginning
     const int64_t accum_t0  = std::max(stream_->startTime(), stream_t - accum_window_us_);
@@ -54,7 +54,8 @@ void DVSViewerPanel::onTimeChanged(int64_t t) {
 }
 
 void DVSViewerPanel::draw() {
-    if (!ImGui::Begin(label_.c_str(), &open_)) {
+    constexpr ImGuiWindowFlags kWindowFlags = ImGuiWindowFlags_NoMove;
+    if (!ImGui::Begin(label_.c_str(), &open_, kWindowFlags)) {
         ImGui::End();
         return;
     }
@@ -81,8 +82,9 @@ void DVSViewerPanel::draw() {
     ImGui::SetNextItemWidth(120.f);
     if (ImGui::SliderFloat("##accum", &accum_ms, 0.5f, 500.f, "%.1f ms",
                            ImGuiSliderFlags_Logarithmic)) {
+        const int64_t cur = last_time_;
         setAccumWindow(static_cast<int64_t>(accum_ms * 1000.f));
-        if (last_time_ >= 0) onTimeChanged(last_time_);
+        if (cur >= 0) onTimeChanged(cur);
     }
 
     // Annotation toolbar (Annotate / Stop / Save)

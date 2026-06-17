@@ -17,6 +17,7 @@
 #include <fstream>
 #include <limits>
 #include <string>
+#include <utility>
 
 namespace mustard {
 
@@ -53,23 +54,20 @@ void App::draw() {
                                std::ceil(std::sqrt(static_cast<double>(n)))));
         const int   rows = (n + cols - 1) / cols;
         const float playback_h = 48.f;
-        const float pw = vp->WorkSize.x / static_cast<float>(cols);
-        const float ph = (vp->WorkSize.y - playback_h) / static_cast<float>(rows);
-
-        // On the frame immediately after openFolder, force the grid layout.
-        // Afterwards, let ImGui/docking remember the user's arrangement.
-        const ImGuiCond cond = layout_pending_ ? ImGuiCond_Always : ImGuiCond_Once;
+        const float viewer_w = std::max(1.f, vp->WorkSize.x);
+        const float viewer_h = std::max(1.f, vp->WorkSize.y - playback_h);
+        const float pw = viewer_w / static_cast<float>(cols);
+        const float ph = viewer_h / static_cast<float>(rows);
 
         for (int i = 0; i < n; ++i) {
             const int col = i % cols;
             const int row = i / cols;
             ImGui::SetNextWindowPos(
-                {vp->WorkPos.x + col * pw, vp->WorkPos.y + row * ph}, cond);
-            ImGui::SetNextWindowSize({pw, ph}, cond);
+                {vp->WorkPos.x + col * pw, vp->WorkPos.y + row * ph},
+                ImGuiCond_Always);
+            ImGui::SetNextWindowSize({pw, ph}, ImGuiCond_Always);
             viewers_[i]->draw();
         }
-
-        layout_pending_ = false;
 
         // Remove any panels the user closed this frame.
         viewers_.erase(
@@ -104,6 +102,8 @@ void App::draw() {
 // ---------------------------------------------------------------------------
 
 void App::drawMenuBar() {
+    std::string recent_path_to_open;
+
     if (ImGui::BeginMainMenuBar()) {
         if (ImGui::BeginMenu("File")) {
             if (ImGui::MenuItem("Open File\xe2\x80\xa6", "Ctrl+O")) {
@@ -120,7 +120,7 @@ void App::drawMenuBar() {
                     // even if two paths share the same display text.
                     const std::string item_id = p + "##r" + std::to_string(idx++);
                     if (ImGui::MenuItem(item_id.c_str())) {
-                        openFileOrFolder(p);
+                        recent_path_to_open = p;
                     }
                 }
                 ImGui::Separator();
@@ -151,6 +151,10 @@ void App::drawMenuBar() {
         ImGui::EndMainMenuBar();
     }
 
+    if (!recent_path_to_open.empty()) {
+        openFileOrFolder(std::move(recent_path_to_open));
+    }
+
     // Ctrl+O / Ctrl+Shift+O shortcuts
     const ImGuiIO& io = ImGui::GetIO();
     if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_O, /*repeat=*/false)) {
@@ -161,7 +165,7 @@ void App::drawMenuBar() {
     }
 }
 
-void App::openFileOrFolder(const std::string &p)
+void App::openFileOrFolder(std::string p)
 {
     if (loading_active_) return;
     viewers_.clear();
@@ -179,8 +183,8 @@ void App::openFileOrFolder(const std::string &p)
     };
     loading_active_ = true;
     loading_done_ = false;
-    loading_thread_ = std::thread([this, p]() {
-        openFileOrFolderBlocking(p);
+    loading_thread_ = std::thread([this, path = std::move(p)]() {
+        openFileOrFolderBlocking(path);
         loading_done_ = true;
         loading_active_ = false;
     });
@@ -318,7 +322,9 @@ void App::finishLoadingIfDone() {
         loading_thread_.join();
     }
     loading_done_ = false;
-    layout_pending_ = true;
+    if (!viewers_.empty()) {
+        time_ctrl_->seekTo(time_ctrl_->startTime());
+    }
 }
 
 void App::drawLoadingOverlay() {
@@ -483,6 +489,7 @@ void App::openSingleFile(const std::string& filepath) {
     const std::string label = fs::path(filepath).filename().string() + "##v1";
     int64_t t_start = std::numeric_limits<int64_t>::max();
     int64_t t_end   = std::numeric_limits<int64_t>::min();
+    const bool extending_existing_range = !viewers_.empty();
     bool ok = false;
 
     if (isMp4Candidate(filepath))
@@ -499,10 +506,13 @@ void App::openSingleFile(const std::string& filepath) {
         return;
     }
 
-    time_ctrl_->setRange(t_start, t_end);
-    time_ctrl_->seekTo(t_start);
+    if (extending_existing_range) {
+        time_ctrl_->setRange(std::min(time_ctrl_->startTime(), t_start),
+                             std::max(time_ctrl_->endTime(), t_end));
+    } else {
+        time_ctrl_->setRange(t_start, t_end);
+    }
     status_message_ = "Opened: " + fs::path(filepath).filename().string();
-    layout_pending_ = true;
 }
 
 // ---------------------------------------------------------------------------
@@ -519,9 +529,6 @@ void App::openFolder(const std::string& path) {
         status_message_ = "Not a valid directory: " + path;
         return;
     }
-
-    int64_t t_min = std::numeric_limits<int64_t>::max();
-    int64_t t_max = std::numeric_limits<int64_t>::min();
 
     openSingleFile(path);
 
@@ -547,12 +554,12 @@ void App::openFolder(const std::string& path) {
     // global_t = global_start, aligning all streams at the earliest timestamp.
     // For video panels (0-based) video_t = global_t - offset; offset = global_start
     // makes frame 0 appear at global_start.
+
     for (auto& v : viewers_) {
         v->setStartOffset(time_ctrl_->startTime());
     }
 
     status_message_ = std::to_string(viewers_.size()) + " stream(s) opened";
-    layout_pending_ = true;
 }
 
 // ---------------------------------------------------------------------------

@@ -89,7 +89,8 @@ void ImageListPanel::onTimeChanged(int64_t t) {
 }
 
 void ImageListPanel::draw() {
-    if (!ImGui::Begin(label_.c_str(), &open_)) {
+    constexpr ImGuiWindowFlags kWindowFlags = ImGuiWindowFlags_NoMove;
+    if (!ImGui::Begin(label_.c_str(), &open_, kWindowFlags)) {
         ImGui::End();
         return;
     }

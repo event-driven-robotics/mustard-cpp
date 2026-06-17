@@ -22,10 +22,11 @@ CTestTestfile.cmake
 
 # Editor artifacts
 .vscode/settings.json
-.vscode/launch.json
 *.swp
 *.swo
 *~
+
+*.tmp_index
 
 # Python bytecode (glad generator)
 __pycache__/

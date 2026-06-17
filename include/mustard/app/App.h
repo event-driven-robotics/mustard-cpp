@@ -37,7 +37,7 @@ public:
 
 private:
     void drawMenuBar();
-    void openFileOrFolder(const std::string &p);
+    void openFileOrFolder(std::string p);
     void openFileOrFolderBlocking(const std::string& p);
     void drawFileDialog();
     void drawPlaybackPanel();
@@ -90,7 +90,6 @@ private:
     bool        wants_quit_{false};
     bool        show_open_file_dialog_{false};
     bool        show_open_folder_dialog_{false};
-    bool        layout_pending_{false};
     std::atomic<bool>   loading_active_{false};
     std::atomic<bool>   loading_done_{false};
     std::atomic<float>  loading_progress_{0.f};
