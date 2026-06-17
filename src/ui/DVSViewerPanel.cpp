@@ -6,7 +6,7 @@
 
 namespace mustard {
 
-DVSViewerPanel::DVSViewerPanel(std::shared_ptr<IITDatalogStream> stream,
+DVSViewerPanel::DVSViewerPanel(std::shared_ptr<DVSEventStream> stream,
                                std::string                        label)
     : ViewerPanel(std::move(label)), stream_(std::move(stream))
 {}
@@ -35,7 +35,7 @@ void DVSViewerPanel::onTimeChanged(int64_t t) {
 
     // Accumulation window: clamp start to stream's beginning
     const int64_t accum_t0  = std::max(stream_->startTime(), stream_t - accum_window_us_);
-    const int64_t chunk_dur = IITDatalogStream::kChunkDurationUs;
+    const int64_t chunk_dur = stream_->chunkDurationUs();
     const int64_t ct_start  = (accum_t0 / chunk_dur) * chunk_dur;
 
     switch (rep_mode_) {
@@ -204,7 +204,7 @@ void DVSViewerPanel::renderHistogram(int64_t ct_start, int64_t accum_t0, int64_t
     std::fill(aux_surface_.begin(),  aux_surface_.end(),  0.f);
     std::fill(aux_polarity_.begin(), aux_polarity_.end(), int8_t{0});
 
-    const int64_t chunk_dur = IITDatalogStream::kChunkDurationUs;
+    const int64_t chunk_dur = stream_->chunkDurationUs();
     for (int64_t ct = ct_start; ct <= t_now; ct += chunk_dur) {
         auto chunk = stream_->getDataAtTime(ct);
         if (!chunk) continue;
@@ -264,7 +264,7 @@ void DVSViewerPanel::renderTimeSurface(int64_t ct_start, int64_t accum_t0, int64
 
     const int64_t span     = t_now - accum_t0;
     const float   inv_span = (span > 0) ? 1.f / static_cast<float>(span) : 1.f;
-    const int64_t chunk_dur = IITDatalogStream::kChunkDurationUs;
+    const int64_t chunk_dur = stream_->chunkDurationUs();
 
     for (int64_t ct = ct_start; ct <= t_now; ct += chunk_dur) {
         auto chunk = stream_->getDataAtTime(ct);
@@ -305,7 +305,7 @@ void DVSViewerPanel::renderTernaryImage(int64_t ct_start, int64_t accum_t0, int6
     }
     std::fill(aux_polarity_.begin(), aux_polarity_.end(), int8_t{-1});
 
-    const int64_t chunk_dur = IITDatalogStream::kChunkDurationUs;
+    const int64_t chunk_dur = stream_->chunkDurationUs();
     for (int64_t ct = ct_start; ct <= t_now; ct += chunk_dur) {
         auto chunk = stream_->getDataAtTime(ct);
         if (!chunk) continue;

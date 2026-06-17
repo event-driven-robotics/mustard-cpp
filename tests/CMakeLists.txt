@@ -36,6 +36,7 @@ add_test(NAME test_annotation_store COMMAND test_annotation_store)
 
 # Synthetic-data loader test (writes a temp file in /tmp — no sample files)
 mustard_add_test(test_iitdatalog_loader test_iitdatalog_loader.cpp)
+mustard_add_test(test_prophesee_raw_loader test_prophesee_raw_loader.cpp)
 
 # ---------------------------------------------------------------------------
 # Integration test — uses the real data.log sample (git-lfs tracked)

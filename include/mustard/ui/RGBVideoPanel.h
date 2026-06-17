@@ -5,6 +5,7 @@
 #include "imgui.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -29,7 +30,8 @@ public:
     /// @param filepath  Path to the video file.
     /// @param label     ImGui window title.
     explicit RGBVideoPanel(std::string filepath,
-                           std::string label);
+                           std::string label,
+                           std::function<void(float, const std::string&)> progress_cb = {});
     ~RGBVideoPanel() override;
 
     RGBVideoPanel(const RGBVideoPanel&)            = delete;
@@ -63,6 +65,7 @@ private:
     int64_t duration_us_{0};
     int64_t last_time_us_{-1};
     bool    loaded_{false};
+    std::function<void(float, const std::string&)> progress_cb_;
 };
 
 } // namespace mustard

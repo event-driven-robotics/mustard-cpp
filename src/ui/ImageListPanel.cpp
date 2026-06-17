@@ -30,19 +30,38 @@ bool isImageExtension(const std::filesystem::path& p) {
 // Construction / destruction
 // ---------------------------------------------------------------------------
 
-ImageListPanel::ImageListPanel(std::string dir_path, std::string label)
-    : ViewerPanel(std::move(label))
+ImageListPanel::ImageListPanel(std::string dir_path, std::string label,
+                               std::function<void(float, const std::string&)> progress_cb)
+    : ViewerPanel(std::move(label)), progress_cb_(std::move(progress_cb))
 {
     namespace fs = std::filesystem;
     std::error_code ec;
+    if (progress_cb_) progress_cb_(0.0f, "Scanning images");
+    std::size_t total_images = 0;
     for (const auto& entry : fs::directory_iterator(dir_path, ec)) {
         if (ec) { ec.clear(); continue; }
         if (!entry.is_regular_file(ec)) { ec.clear(); continue; }
-        if (isImageExtension(entry.path()))
+        if (isImageExtension(entry.path())) {
+            ++total_images;
+        }
+    }
+    ec.clear();
+    std::size_t loaded_images = 0;
+    for (const auto& entry : fs::directory_iterator(dir_path, ec)) {
+        if (ec) { ec.clear(); continue; }
+        if (!entry.is_regular_file(ec)) { ec.clear(); continue; }
+        if (isImageExtension(entry.path())) {
             images_.push_back(entry.path().string());
+            ++loaded_images;
+            if (progress_cb_ && total_images > 0) {
+                const float frac = static_cast<float>(loaded_images) / static_cast<float>(total_images);
+                progress_cb_(0.25f + frac * 0.65f, "Scanning images");
+            }
+        }
     }
     std::sort(images_.begin(), images_.end());
     loaded_ = !images_.empty();
+    if (progress_cb_) progress_cb_(loaded_ ? 1.0f : 0.0f, loaded_ ? "Ready" : "No images found");
 }
 
 ImageListPanel::~ImageListPanel() {

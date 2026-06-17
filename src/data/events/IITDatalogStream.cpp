@@ -7,8 +7,14 @@ IITDatalogStream::IITDatalogStream(std::size_t cache_bytes)
 {}
 
 bool IITDatalogStream::open(const std::string& path) {
+    return open(path, {});
+}
+
+bool IITDatalogStream::open(const std::string& path,
+                            std::function<void(float, const std::string&)> progress_cb) {
     path_ = path;
     cache_.clear();
+    loader_.setProgressCallback(std::move(progress_cb));
     return loader_.open(path);
 }
 
@@ -41,6 +47,7 @@ int64_t IITDatalogStream::endTime()   const { return loader_.endTime();   }
 
 int IITDatalogStream::sensorWidth()  const noexcept { return loader_.sensorWidth();  }
 int IITDatalogStream::sensorHeight() const noexcept { return loader_.sensorHeight(); }
+int64_t IITDatalogStream::chunkDurationUs() const noexcept { return kChunkDurationUs; }
 
 const std::string& IITDatalogStream::path() const noexcept { return path_; }
 

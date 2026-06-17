@@ -6,6 +6,7 @@
 #include "stb_image.h"
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -31,7 +32,8 @@ public:
 
     /// @param dir_path  Directory containing PNG/JPG images.
     /// @param label     ImGui window title.
-    explicit ImageListPanel(std::string dir_path, std::string label);
+    explicit ImageListPanel(std::string dir_path, std::string label,
+                            std::function<void(float, const std::string&)> progress_cb = {});
     ~ImageListPanel() override;
 
     ImageListPanel(const ImageListPanel&)            = delete;
@@ -62,6 +64,7 @@ private:
 
     int  last_index_{-1};
     bool loaded_{false};
+    std::function<void(float, const std::string&)> progress_cb_;
 };
 
 } // namespace mustard

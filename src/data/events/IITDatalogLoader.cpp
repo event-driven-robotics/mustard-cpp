@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstring>
 #include <ios>
+#include <filesystem>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -22,6 +23,7 @@ bool IITDatalogLoader::open(const std::string& path) {
     if (!file_.is_open()) {
         return false;
     }
+    reportProgress(0.0f, "Building index");
     if (!buildIndex()) {
         close();
         return false;
@@ -32,7 +34,9 @@ bool IITDatalogLoader::open(const std::string& path) {
     }
     start_time_ = index_.front().ts_us;
     end_time_   = index_.back().ts_us;
+    reportProgress(0.85f, "Detecting resolution");
     detectResolution(50);
+    reportProgress(1.0f, "Ready");
     return true;
 }
 
@@ -62,12 +66,31 @@ int64_t IITDatalogLoader::endTime()   const { return end_time_;   }
 bool IITDatalogLoader::buildIndex() {
     file_.clear();
     file_.seekg(0, std::ios::beg);
+    std::error_code ec;
+    const auto total_size = std::filesystem::file_size(path_, ec);
+    std::uintmax_t bytes_done = 0;
+    float last_reported = 0.0f;
 
     std::string line;
     while (true) {
         std::streampos line_start = file_.tellg();
         if (!std::getline(file_, line)) {
             break;
+        }
+        if (!ec) {
+            const auto pos = file_.tellg();
+            if (pos != std::streampos(-1)) {
+                bytes_done = static_cast<std::uintmax_t>(pos);
+                if (total_size > 0) {
+                    const float progress = static_cast<float>(
+                        static_cast<double>(bytes_done) / static_cast<double>(total_size));
+                    const float scaled = progress * 0.8f;
+                    if (scaled - last_reported >= 0.01f) {
+                        last_reported = scaled;
+                        reportProgress(scaled, "Building index");
+                    }
+                }
+            }
         }
         // Skip empty lines and comment-like lines
         if (line.empty() || line[0] == '#') {
@@ -112,6 +135,8 @@ void IITDatalogLoader::detectResolution(int n_packets) {
     int max_y = 0;
 
     std::size_t step = std::max(std::size_t{1}, index_.size() / static_cast<std::size_t>(n_packets));
+    std::size_t samples = 0;
+    float last_reported = 0.85f;
 
     for (std::size_t i = 0; i < index_.size(); i += step) {
         const auto& entry = index_[i];
@@ -126,6 +151,14 @@ void IITDatalogLoader::detectResolution(int n_packets) {
             DVSEvent ev = decodeEvent(&raw_bytes[b], ts);
             if (ev.x > max_x) max_x = ev.x;
             if (ev.y > max_y) max_y = ev.y;
+        }
+        ++samples;
+        const float sample_progress = static_cast<float>(samples)
+                                    / static_cast<float>(std::max<std::size_t>(1, (index_.size() + step - 1) / step));
+        const float scaled = 0.85f + sample_progress * 0.15f;
+        if (scaled - last_reported >= 0.01f || samples == 1) {
+            last_reported = scaled;
+            reportProgress(scaled, "Detecting resolution");
         }
     }
 

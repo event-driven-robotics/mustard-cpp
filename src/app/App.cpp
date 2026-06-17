@@ -4,11 +4,13 @@
 #include "mustard/ui/RGBVideoPanel.h"
 #include "mustard/ui/ImageListPanel.h"
 #include "mustard/data/events/IITDatalogStream.h"
+#include "mustard/data/events/PropheseeRawStream.h"
 
 #include "ImGuiFileDialog.h"
 #include "imgui.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -24,6 +26,12 @@ App::App()
     loadRecentPaths();
 }
 
+App::~App() {
+    if (loading_thread_.joinable()) {
+        loading_thread_.join();
+    }
+}
+
 void App::tick(double dt) {
     time_ctrl_->tick(dt);
 }
@@ -31,6 +39,12 @@ void App::tick(double dt) {
 void App::draw() {
     drawMenuBar();
     drawFileDialog();
+
+    finishLoadingIfDone();
+    if (loading_active_) {
+        drawLoadingOverlay();
+        return;
+    }
 
     if (!viewers_.empty()) {
         const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -123,7 +137,13 @@ void App::drawMenuBar() {
             ImGui::EndMenu();
         }
 
-        if (!status_message_.empty()) {
+        if (loading_active_) {
+            std::lock_guard<std::mutex> lock(loading_mutex_);
+            if (!loading_stage_.empty()) {
+                ImGui::Separator();
+                ImGui::TextDisabled("%s", loading_stage_.c_str());
+            }
+        } else if (!status_message_.empty()) {
             ImGui::Separator();
             ImGui::TextDisabled("%s", status_message_.c_str());
         }
@@ -143,16 +163,38 @@ void App::drawMenuBar() {
 
 void App::openFileOrFolder(const std::string &p)
 {
+    if (loading_active_) return;
     viewers_.clear();
     time_ctrl_ = std::make_shared<TimeController>();
     addRecentPath(p);
+    loading_progress_ = 0.f;
+    {
+        std::lock_guard<std::mutex> lock(loading_mutex_);
+        loading_stage_ = "Starting load";
+    }
+    load_progress_cb_ = [this](float progress, const std::string& stage) {
+        loading_progress_ = progress;
+        std::lock_guard<std::mutex> lock(loading_mutex_);
+        loading_stage_ = stage;
+    };
+    loading_active_ = true;
+    loading_done_ = false;
+    loading_thread_ = std::thread([this, p]() {
+        openFileOrFolderBlocking(p);
+        loading_done_ = true;
+        loading_active_ = false;
+    });
+}
+
+void App::openFileOrFolderBlocking(const std::string &p)
+{
     namespace fs = std::filesystem;
     std::error_code ec;
     if (fs::is_directory(p, ec) && !ec)
         openFolder(p);
     else
         openSingleFile(p);
-} 
+}
 
 // ---------------------------------------------------------------------------
 // Private — file/folder browser dialog
@@ -270,6 +312,48 @@ void App::drawPlaybackPanel() {
     ImGui::End();
 }
 
+void App::finishLoadingIfDone() {
+    if (!loading_done_) return;
+    if (loading_thread_.joinable()) {
+        loading_thread_.join();
+    }
+    loading_done_ = false;
+    layout_pending_ = true;
+}
+
+void App::drawLoadingOverlay() {
+    constexpr ImGuiWindowFlags kFlags =
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoInputs |
+        ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos({vp->WorkPos.x + vp->WorkSize.x * 0.5f,
+                             vp->WorkPos.y + vp->WorkSize.y * 0.5f},
+                            ImGuiCond_Always, {0.5f, 0.5f});
+    ImGui::SetNextWindowSize({440.f, 120.f}, ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.9f);
+    ImGui::Begin("##loading_overlay", nullptr, kFlags);
+
+    ImGui::TextUnformatted("Loading dataset");
+    {
+        std::lock_guard<std::mutex> lock(loading_mutex_);
+        if (!loading_stage_.empty()) {
+            ImGui::TextDisabled("%s", loading_stage_.c_str());
+        }
+    }
+    const float progress = loading_progress_.load();
+    const bool determinate = progress > 0.0f;
+    const ImVec2 bar_size(-FLT_MIN, 0.f);
+    if (determinate) {
+        ImGui::ProgressBar(progress, bar_size, nullptr);
+    } else {
+        ImGui::ProgressBar(0.5f, bar_size, "Working...");
+    }
+
+    ImGui::End();
+}
+
 // ---------------------------------------------------------------------------
 // Private — folder scanning
 // ---------------------------------------------------------------------------
@@ -277,6 +361,12 @@ void App::drawPlaybackPanel() {
 bool App::isIITDatalogCandidate(const std::string& filepath) {
     namespace fs = std::filesystem;
     return fs::path(filepath).extension() == ".log";
+}
+
+bool App::isPropheseeRawCandidate(const std::string& filepath) {
+    namespace fs = std::filesystem;
+    const auto ext = fs::path(filepath).extension().string();
+    return ext == ".raw" || ext == ".RAW";
 }
 
 bool App::isMp4Candidate(const std::string& filepath) {
@@ -308,7 +398,7 @@ bool App::isImageListCandidate(const std::string& dir_path) {
 
 bool App::tryAddImageList(const std::string& dir_path, const std::string& label,
                           int64_t& t_min, int64_t& t_max) {
-    auto panel = std::make_unique<ImageListPanel>(dir_path, label);
+    auto panel = std::make_unique<ImageListPanel>(dir_path, label, load_progress_cb_);
     if (!panel->isLoaded()) return false;
 
     panel->setAnnotationStore(std::make_shared<AnnotationStore>());
@@ -328,7 +418,7 @@ bool App::tryAddImageList(const std::string& dir_path, const std::string& label,
 bool App::tryAddIITDatalog(const std::string& filepath, const std::string& label,
                            int64_t& t_min, int64_t& t_max) {
     auto stream = std::make_shared<IITDatalogStream>();
-    if (!stream->open(filepath)) return false;
+    if (!stream->open(filepath, load_progress_cb_)) return false;
     if (stream->sensorWidth()  <= 0 ||
         stream->sensorHeight() <= 0 ||
         stream->startTime()    >= stream->endTime()) return false;
@@ -346,9 +436,29 @@ bool App::tryAddIITDatalog(const std::string& filepath, const std::string& label
     return true;
 }
 
+bool App::tryAddPropheseeRaw(const std::string& filepath, const std::string& label,
+                             int64_t& t_min, int64_t& t_max) {
+    auto stream = std::make_shared<PropheseeRawStream>();
+    if (!stream->open(filepath, load_progress_cb_)) return false;
+    if (stream->sensorWidth()  <= 0 ||
+        stream->sensorHeight() <= 0 ||
+        stream->startTime()    >= stream->endTime()) return false;
+
+    t_min = std::min(t_min, stream->startTime());
+    t_max = std::max(t_max, stream->endTime());
+
+    auto panel = std::make_unique<DVSViewerPanel>(stream, label);
+    panel->setAnnotationStore(std::make_shared<AnnotationStore>());
+    DVSViewerPanel* raw = panel.get();
+    raw->setStartOffset(stream->startTime());
+    time_ctrl_->addObserver([raw](int64_t t) { raw->onTimeChanged(t); });
+    viewers_.push_back(std::move(panel));
+    return true;
+}
+
 bool App::tryAddVideo(const std::string& filepath, const std::string& label,
                       int64_t& t_min, int64_t& t_max) {
-    auto panel = std::make_unique<RGBVideoPanel>(filepath, label);
+    auto panel = std::make_unique<RGBVideoPanel>(filepath, label, load_progress_cb_);
     if (!panel->isLoaded()) return false;
 
     panel->setAnnotationStore(std::make_shared<AnnotationStore>());
@@ -377,6 +487,8 @@ void App::openSingleFile(const std::string& filepath) {
 
     if (isMp4Candidate(filepath))
         ok = tryAddVideo(filepath, label, t_start, t_end);
+    else if (isPropheseeRawCandidate(filepath))
+        ok = tryAddPropheseeRaw(filepath, label, t_start, t_end);
     else if (isIITDatalogCandidate(filepath))
         ok = tryAddIITDatalog(filepath, label, t_start, t_end);
     else if (isImageListCandidate(filepath))

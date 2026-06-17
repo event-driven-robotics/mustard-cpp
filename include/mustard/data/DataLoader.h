@@ -1,6 +1,7 @@
 #pragma once
 #include "mustard/data/DataChunk.h"
 
+#include <algorithm>
 #include <functional>
 #include <string>
 #include <vector>
@@ -15,6 +16,8 @@ namespace mustard {
 template <typename T>
 class DataLoader {
 public:
+    using ProgressCallback = std::function<void(float, const std::string&)>;
+
     virtual ~DataLoader() = default;
 
     /// Open the data source at @p path.  Returns true on success.
@@ -48,12 +51,25 @@ public:
         callbacks_.push_back(std::move(cb));
     }
 
+    /// Register a callback used by long-running open/read operations to
+    /// publish load progress in the range [0, 1] with a short stage label.
+    void setProgressCallback(ProgressCallback cb) {
+        progress_cb_ = std::move(cb);
+    }
+
 protected:
     /// Subclass-provided chunk-reading implementation (no callbacks applied).
     virtual DataChunk<T> readChunkImpl(int64_t t0, int64_t t1) = 0;
 
+    void reportProgress(float progress, const std::string& stage) const {
+        if (progress_cb_) {
+            progress_cb_(std::clamp(progress, 0.0f, 1.0f), stage);
+        }
+    }
+
 private:
     std::vector<std::function<void(DataChunk<T>&)>> callbacks_;
+    ProgressCallback progress_cb_;
 };
 
 } // namespace mustard

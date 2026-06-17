@@ -21,6 +21,16 @@ find_library(AVUTIL_LIB   avutil   REQUIRED)
 find_library(SWSCALE_LIB  swscale  REQUIRED)
 
 # ---------------------------------------------------------------------------
+# OpenEB / Metavision SDK — Prophesee RAW event decoding
+# ---------------------------------------------------------------------------
+find_package(MetavisionSDK 5.2.0 REQUIRED COMPONENTS stream)
+
+# OpenEB is installed under /usr/local in the devcontainer.  Use a transitive
+# build rpath so Metavision's indirect shared-library dependencies are found.
+add_link_options(-Wl,--disable-new-dtags)
+set(CMAKE_BUILD_RPATH "/usr/local/lib")
+
+# ---------------------------------------------------------------------------
 # glad — vendored pre-generated for OpenGL 3.3 core (no Python required)
 # ---------------------------------------------------------------------------
 add_library(glad STATIC third_party/glad/src/gl.c)
@@ -35,6 +45,8 @@ add_library(mustard STATIC
     src/core/TimeController.cpp
     src/data/events/IITDatalogLoader.cpp
     src/data/events/IITDatalogStream.cpp
+    src/data/events/PropheseeRawLoader.cpp
+    src/data/events/PropheseeRawStream.cpp
     src/annotation/BoundingBox.cpp
     src/annotation/AnnotationStore.cpp
 )
@@ -42,7 +54,7 @@ target_include_directories(mustard PUBLIC include)
 # imgui is needed here so that BoundingBox.cpp can find imgui.h at compile time.
 # PRIVATE keeps it out of mustard's public interface so pure-data test targets
 # that don't reference annotation types are unaffected.
-target_link_libraries(mustard PRIVATE imgui)
+target_link_libraries(mustard PRIVATE imgui MetavisionSDK::stream)
 
 # ---------------------------------------------------------------------------
 # mustard_app — viewer executable

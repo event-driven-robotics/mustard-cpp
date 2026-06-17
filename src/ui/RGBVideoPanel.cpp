@@ -46,8 +46,9 @@ struct RGBVideoPanel::FFmpegCtx {
 // ---------------------------------------------------------------------------
 
 RGBVideoPanel::RGBVideoPanel(std::string filepath,
-                             std::string label)
-    : ViewerPanel(std::move(label))
+                             std::string label,
+                             std::function<void(float, const std::string&)> progress_cb)
+    : ViewerPanel(std::move(label)), progress_cb_(std::move(progress_cb))
 {
     ff_ = std::make_unique<FFmpegCtx>();
     loaded_ = openVideo(filepath);
@@ -122,10 +123,12 @@ void RGBVideoPanel::draw() {
 // ---------------------------------------------------------------------------
 
 bool RGBVideoPanel::openVideo(const std::string& filepath) {
+    if (progress_cb_) progress_cb_(0.0f, "Opening video");
     // Open container
     if (avformat_open_input(&ff_->fmt_ctx, filepath.c_str(),
                             nullptr, nullptr) < 0)
         return false;
+    if (progress_cb_) progress_cb_(0.2f, "Reading stream info");
 
     if (avformat_find_stream_info(ff_->fmt_ctx, nullptr) < 0)
         return false;
@@ -134,6 +137,7 @@ bool RGBVideoPanel::openVideo(const std::string& filepath) {
     ff_->video_stream_idx = av_find_best_stream(
         ff_->fmt_ctx, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
     if (ff_->video_stream_idx < 0) return false;
+    if (progress_cb_) progress_cb_(0.35f, "Configuring decoder");
 
     AVStream* vs   = ff_->fmt_ctx->streams[ff_->video_stream_idx];
     ff_->time_base = vs->time_base;
@@ -147,6 +151,7 @@ bool RGBVideoPanel::openVideo(const std::string& filepath) {
         duration_us_ = ff_->fmt_ctx->duration;
     }
     if (duration_us_ <= 0) return false;
+    if (progress_cb_) progress_cb_(0.5f, "Preparing texture");
 
     // Find and open decoder
     const AVCodec* codec = avcodec_find_decoder(vs->codecpar->codec_id);
@@ -154,6 +159,7 @@ bool RGBVideoPanel::openVideo(const std::string& filepath) {
 
     ff_->codec_ctx = avcodec_alloc_context3(codec);
     if (!ff_->codec_ctx) return false;
+    if (progress_cb_) progress_cb_(0.65f, "Opening decoder");
 
     if (avcodec_parameters_to_context(ff_->codec_ctx, vs->codecpar) < 0)
         return false;
@@ -163,6 +169,7 @@ bool RGBVideoPanel::openVideo(const std::string& filepath) {
     tex_w_ = ff_->codec_ctx->width;
     tex_h_ = ff_->codec_ctx->height;
     if (tex_w_ <= 0 || tex_h_ <= 0) return false;
+    if (progress_cb_) progress_cb_(0.8f, "Allocating frame buffers");
 
     // Allocate decode + RGBA frames
     ff_->frame      = av_frame_alloc();
@@ -184,6 +191,7 @@ bool RGBVideoPanel::openVideo(const std::string& filepath) {
         tex_w_, tex_h_, AV_PIX_FMT_RGBA,
         SWS_BILINEAR, nullptr, nullptr, nullptr);
     if (!ff_->sws_ctx) return false;
+    if (progress_cb_) progress_cb_(1.0f, "Ready");
 
     return true;
 }

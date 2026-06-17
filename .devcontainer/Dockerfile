@@ -15,6 +15,17 @@ RUN apt-get update && apt-get install -y \
     # OpenGL — Mesa software renderer (no GPU required)
     libgl1-mesa-dev \
     libglu1-mesa-dev \
+    # OpenEB / Metavision SDK dependencies
+    libopencv-dev \
+    libboost-all-dev \
+    libusb-1.0-0-dev \
+    libprotobuf-dev \
+    protobuf-compiler \
+    libhdf5-dev \
+    hdf5-tools \
+    libglew-dev \
+    libglfw3-dev \
+    libcanberra-gtk-module \
     # X11 dependencies required by GLFW when built from source via FetchContent
     libx11-dev \
     libxrandr-dev \
@@ -80,6 +91,15 @@ RUN apt-get update && apt-get install -y \
     libgdk-pixbuf-2.0-dev \
     libpango1.0-dev \
     && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 --branch 5.2.0 https://github.com/prophesee-ai/openeb.git /tmp/openeb \
+    && cmake -S /tmp/openeb -B /tmp/openeb/build \
+        -DBUILD_TESTING=OFF \
+        -DCOMPILE_PYTHON3_BINDINGS=OFF \
+        -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build /tmp/openeb/build --parallel "$(nproc)" \
+    && cmake --build /tmp/openeb/build --target install \
+    && rm -rf /tmp/openeb
 
 # Use Mesa software rasterizer by default — no GPU passthrough required.
 # Override with LIBGL_ALWAYS_SOFTWARE=0 and --device /dev/dri to use the host GPU.

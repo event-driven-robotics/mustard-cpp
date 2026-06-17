@@ -1,7 +1,7 @@
 #pragma once
 #include "mustard/ui/ViewerPanel.h"
 #include "mustard/annotation/AnnotationStore.h"
-#include "mustard/data/events/IITDatalogStream.h"
+#include "mustard/data/events/DVSEventStream.h"
 
 #include <glad/gl.h>
 #include "imgui.h"
@@ -33,7 +33,7 @@ public:
         kTernaryImage, ///< Three states: ON=white / OFF=black / none=grey.
     };
 
-    explicit DVSViewerPanel(std::shared_ptr<IITDatalogStream> stream,
+    explicit DVSViewerPanel(std::shared_ptr<DVSEventStream> stream,
                             std::string                        label);
     ~DVSViewerPanel();
 
@@ -74,7 +74,7 @@ private:
     void renderTimeSurface(int64_t ct_start, int64_t accum_t0, int64_t t_now);
     void renderTernaryImage(int64_t ct_start, int64_t accum_t0, int64_t t_now);
 
-    std::shared_ptr<IITDatalogStream> stream_;
+    std::shared_ptr<DVSEventStream> stream_;
 
     GLuint               texture_id_{0};
     int                  tex_w_{0};
