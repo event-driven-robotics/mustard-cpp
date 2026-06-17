@@ -1,6 +1,7 @@
 // src/annotation/BoundingBox.cpp
 #include "mustard/annotation/BoundingBox.h"
 #include "mustard/annotation/Annotation.h"
+#include "mustard/annotation/EyeTracking.h"
 
 #include <memory>
 #include <sstream>
@@ -122,7 +123,9 @@ std::unique_ptr<Annotation> Annotation::deserialize(const std::string& s) {
     if (s.rfind("BoundingBox", 0) == 0) {
         return BoundingBox::deserialize(s);
     }
-    // Future annotation types: add more branches here.
+    if (s.rfind("EyeTracking", 0) == 0) {
+        return EyeTracking::deserialize(s);
+    }
     return nullptr;
 }
 

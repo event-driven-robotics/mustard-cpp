@@ -1,6 +1,7 @@
 #pragma once
 #include "mustard/annotation/AnnotationStore.h"
 #include "imgui.h"
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -10,6 +11,13 @@ namespace mustard {
 /// Annotation type selector — more types will follow.
 enum class AnnotationType {
     kBoundingBox,
+    kEyeTracking,
+};
+
+enum class EyeTrackingDragMode {
+    kOrient,
+    kResizeRadius,
+    kMoveCenter,
 };
 
 /// Abstract base class for all viewer panels.
@@ -71,9 +79,21 @@ protected:
     bool           annotating_{false};
     AnnotationType annotation_type_{AnnotationType::kBoundingBox};
 
-    // Drag state for bbox drawing
+    // Drag state for annotation drawing
     ImVec2 drag_start_{0.f, 0.f};
     bool   dragging_{false};
+
+    EyeTrackingDragMode eye_drag_mode_{EyeTrackingDragMode::kOrient};
+    int64_t eye_draft_t_{0};
+    float   eye_draft_phi_{0.f};
+    float   eye_draft_theta_{0.f};
+    float   eye_draft_center_x_{0.f};
+    float   eye_draft_center_y_{0.f};
+    float   eye_draft_radius_{100.f};
+    bool    eye_edit_active_{false};
+    std::size_t eye_edit_index_{0};
+    float   eye_drag_start_center_x_{0.f};
+    float   eye_drag_start_center_y_{0.f};
 
     /// Render the annotation toolbar row (Annotate / Stop / Save).
     /// Call once per frame from within an ImGui::Begin…End block.
@@ -92,4 +112,3 @@ protected:
 };
 
 } // namespace mustard
-

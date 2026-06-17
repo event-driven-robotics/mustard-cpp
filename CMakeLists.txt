@@ -48,10 +48,11 @@ add_library(mustard STATIC
     src/data/events/PropheseeRawLoader.cpp
     src/data/events/PropheseeRawStream.cpp
     src/annotation/BoundingBox.cpp
+    src/annotation/EyeTracking.cpp
     src/annotation/AnnotationStore.cpp
 )
 target_include_directories(mustard PUBLIC include)
-# imgui is needed here so that BoundingBox.cpp can find imgui.h at compile time.
+# imgui is needed here so that annotation renderers can find imgui.h at compile time.
 # PRIVATE keeps it out of mustard's public interface so pure-data test targets
 # that don't reference annotation types are unaffected.
 target_link_libraries(mustard PRIVATE imgui MetavisionSDK::stream)

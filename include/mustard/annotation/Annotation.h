@@ -16,7 +16,7 @@ namespace mustard {
 ///   - typeName       — stable string tag used by the deserialize factory
 ///
 /// The static Annotation::deserialize factory dispatches on the type tag
-/// prefix and is implemented alongside the concrete types (BoundingBox.cpp).
+/// prefix and is implemented alongside the concrete annotation types.
 class Annotation {
 public:
     virtual ~Annotation() = default;
