@@ -76,6 +76,16 @@ target_compile_definitions(mustard_app PRIVATE IMGUI_IMPL_OPENGL_LOADER_GLAD2)
 # binary still builds; the missing codecs simply won't be available at runtime.
 target_link_options(mustard_app PRIVATE -Wl,--allow-shlib-undefined)
 
+add_custom_target(bundle_mustard
+    COMMAND ${CMAKE_SOURCE_DIR}/scripts/bundle_mustard.sh
+            $<TARGET_FILE:mustard_app>
+            ${CMAKE_BINARY_DIR}/dist/mustard
+    DEPENDS mustard_app
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    COMMENT "Bundling mustard_app into ${CMAKE_BINARY_DIR}/dist/mustard"
+    VERBATIM
+)
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
