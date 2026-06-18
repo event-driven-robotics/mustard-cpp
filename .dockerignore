@@ -1,0 +1,28 @@
+.git
+.agents
+.codex
+.vscode
+
+# Build output
+build/
+build-*/
+out/
+cmake-build-*/
+
+# Generated release artifacts
+*.AppImage
+squashfs-root/
+
+# Local/editor artifacts
+*.o
+*.obj
+*.a
+*.so
+*.dll
+*.exe
+*.swp
+*.swo
+*~
+__pycache__/
+*.pyc
+*.pyo

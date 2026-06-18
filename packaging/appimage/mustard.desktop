@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Mustard
+Comment=Event-camera data viewer
+Exec=mustard_app %F
+Icon=mustard.png
+Categories=Science;DataVisualization;
+Terminal=false

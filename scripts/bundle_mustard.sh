@@ -51,6 +51,16 @@ copy_lib() {
 
     case "$name" in
         ld-linux*.so*|linux-vdso*.so*) return 0 ;;
+        libc.so.*|libm.so.*|libpthread.so.*|libdl.so.*|librt.so.*) return 0 ;;
+        libresolv.so.*|libanl.so.*|libutil.so.*|libnsl.so.*|libcrypt.so.*) return 0 ;;
+        libBrokenLocale.so.*|libSegFault.so|libthread_db.so.*) return 0 ;;
+        libGL.so.*|libGLX.so.*|libGLdispatch.so.*|libOpenGL.so.*) return 0 ;;
+        libEGL.so.*|libGLESv1_CM.so.*|libGLESv2.so.*|libglapi.so.*|libgbm.so.*) return 0 ;;
+        libdrm.so.*|libdrm_*.so.*|libvulkan.so.*) return 0 ;;
+        libX11.so.*|libX11-xcb.so.*|libXau.so.*|libXdmcp.so.*) return 0 ;;
+        libXext.so.*|libXfixes.so.*|libXrender.so.*|libXrandr.so.*) return 0 ;;
+        libXi.so.*|libXcursor.so.*|libXinerama.so.*|libXss.so.*) return 0 ;;
+        libxcb*.so.*|libwayland-*.so.*|libxkbcommon.so.*) return 0 ;;
     esac
 
     if [[ -n "${copied_libs[$name]:-}" ]]; then

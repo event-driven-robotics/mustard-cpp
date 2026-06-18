@@ -87,6 +87,13 @@ add_custom_target(bundle_mustard
     VERBATIM
 )
 
+add_custom_target(appimage
+    COMMAND ${CMAKE_SOURCE_DIR}/scripts/make_appimage.sh
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    COMMENT "Building Mustard AppImage"
+    VERBATIM
+)
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
