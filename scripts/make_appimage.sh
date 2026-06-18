@@ -60,7 +60,7 @@ rm -rf "$appdir"
 mkdir -p "$appdir"
 cp -a "$bundle_dir/." "$appdir/"
 cp "$repo_dir/packaging/appimage/mustard.desktop" "$appdir/mustard.desktop"
-cp "$repo_dir/packaging/appimage/mustard.svg" "$appdir/mustard.svg"
+cp "$repo_dir/packaging/appimage/mustard.png" "$appdir/mustard.png"
 
 mapfile -t bundled_graphics_libs < <(
     find "$appdir/lib" -maxdepth 1 -type f \
