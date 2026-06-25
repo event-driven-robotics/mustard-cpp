@@ -78,4 +78,4 @@ RUN git lfs install --system
 
 WORKDIR /workspace
 
-CMD ["./scripts/make_appimage.sh"]
+CMD ["./packaging/scripts/make_appimage.sh"]

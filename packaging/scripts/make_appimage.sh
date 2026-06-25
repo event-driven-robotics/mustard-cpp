@@ -2,7 +2,7 @@
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repo_dir="$(cd "$script_dir/.." && pwd)"
+repo_dir="$(cd "$script_dir/../.." && pwd)"
 
 build_dir="${BUILD_DIR:-$repo_dir/build-release}"
 dist_dir="$build_dir/dist"
@@ -37,7 +37,7 @@ case "$machine" in
     x86_64|amd64) arch="x86_64" ;;
     *)
         echo "Unsupported AppImage architecture for this script: $machine" >&2
-        echo "Build on x86_64, or extend scripts/make_appimage.sh for this architecture." >&2
+        echo "Build on x86_64, or extend packaging/scripts/make_appimage.sh for this architecture." >&2
         exit 1
         ;;
 esac

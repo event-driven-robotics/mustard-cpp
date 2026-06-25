@@ -106,7 +106,7 @@ protected:
     std::string tmp_path_;
 
     void SetUp() override {
-        tmp_path_ = std::filesystem::temp_directory_path() / "test_iitdatalog.log";
+        tmp_path_ = (std::filesystem::temp_directory_path() / "test_iitdatalog.log").string();
     }
 
     void TearDown() override {
