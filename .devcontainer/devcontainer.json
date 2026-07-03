@@ -8,12 +8,18 @@
     // X11 forwarding for GUI (works on Linux and Windows + WSLg automatically).
     // Windows + VcXsrv: set DISPLAY=host.docker.internal:0.0 in your local environment
     //   before opening the container.
-    // GPU passthrough (optional): uncomment the /dev/dri device line below and set
+    // USB passthrough for Prophesee cameras: bind the USB bus instead of a
+    // specific /dev/bus/usb/... node so the container still starts when the
+    // camera is not attached or its bus/device number changes.
+    // GPU passthrough (optional): add a /dev/dri device and set
     //   LIBGL_ALWAYS_SOFTWARE=0 in containerEnv.
     "runArgs": [
         "--env", "DISPLAY=${localEnv:DISPLAY}",
-        "--volume", "/tmp/.X11-unix:/tmp/.X11-unix:rw"
-        // "--device", "/dev/dri"   // uncomment for host GPU passthrough (Linux only)
+        "--volume", "/tmp/.X11-unix:/tmp/.X11-unix:rw",
+        "--volume", "/dev/bus/usb:/dev/bus/usb:rw",
+        "--device-cgroup-rule", "c 189:* rmw",
+        "--network", "host"
+
     ],
 
     "containerEnv": {

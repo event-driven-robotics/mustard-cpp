@@ -23,12 +23,29 @@ void TimeController::setPlaybackSpeed(double speed) {
     playback_speed_ = speed;
 }
 
+void TimeController::setLiveMode(bool live) {
+    live_mode_ = live;
+    if (live_mode_ && end_time_ < current_time_) {
+        end_time_ = current_time_;
+    }
+}
+
 void TimeController::tick(double delta_seconds) {
     if (!is_playing_) {
         return;
     }
     auto delta_us = static_cast<int64_t>(delta_seconds * 1e6 * playback_speed_);
     int64_t next  = current_time_ + delta_us;
+    if (live_mode_) {
+        if (next < start_time_) next = start_time_;
+        if (next > end_time_) end_time_ = next;
+        if (next != current_time_) {
+            current_time_ = next;
+            notifyObservers();
+        }
+        return;
+    }
+
     int64_t clamped = std::clamp(next, start_time_, end_time_);
     if (clamped != current_time_) {
         current_time_ = clamped;

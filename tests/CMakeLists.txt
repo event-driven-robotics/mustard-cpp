@@ -13,6 +13,8 @@ endfunction()
 # ---------------------------------------------------------------------------
 mustard_add_test(test_chunk_cache      test_chunk_cache.cpp)
 mustard_add_test(test_callback_pipeline test_callback_pipeline.cpp)
+mustard_add_test(test_time_controller test_time_controller.cpp)
+mustard_add_test(test_prophesee_live_buffer test_prophesee_live_buffer.cpp)
 
 # DVSViewerPanel tests — includes DVSViewerPanel.cpp (which references GL symbols)
 # so it must link against glad and imgui.  No GL context is created at runtime;
@@ -33,6 +35,17 @@ add_executable(test_annotation_store test_annotation_store.cpp)
 target_link_libraries(test_annotation_store PRIVATE mustard imgui GTest::gtest_main)
 target_include_directories(test_annotation_store PRIVATE ${CMAKE_SOURCE_DIR}/include)
 add_test(NAME test_annotation_store COMMAND test_annotation_store)
+
+add_executable(test_rgb_frame_conversion
+    test_rgb_frame_conversion.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/RGBFrameConversion.cpp
+)
+target_link_libraries(test_rgb_frame_conversion PRIVATE ${OpenCV_LIBS} GTest::gtest_main)
+target_include_directories(test_rgb_frame_conversion PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${OpenCV_INCLUDE_DIRS}
+)
+add_test(NAME test_rgb_frame_conversion COMMAND test_rgb_frame_conversion)
 
 # Synthetic-data loader test (writes a temp file in /tmp — no sample files)
 mustard_add_test(test_iitdatalog_loader test_iitdatalog_loader.cpp)

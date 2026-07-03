@@ -3,12 +3,8 @@
 #include "mustard/ui/ViewerPanel.h"
 
 #include <deque>
-#include <atomic>
-#include <functional>
-#include <mutex>
 #include <memory>
 #include <string>
-#include <thread>
 #include <vector>
 
 namespace mustard {
@@ -21,7 +17,7 @@ namespace mustard {
 class App {
 public:
     App();
-    ~App();
+    ~App() = default;
 
     App(const App&)            = delete;
     App& operator=(const App&) = delete;
@@ -37,12 +33,9 @@ public:
 
 private:
     void drawMenuBar();
-    void openFileOrFolder(std::string p);
-    void openFileOrFolderBlocking(const std::string& p);
+    void openFileOrFolder(const std::string &p);
     void drawFileDialog();
     void drawPlaybackPanel();
-    void drawLoadingOverlay();
-    void finishLoadingIfDone();
 
     /// Recursively scan @p path for iitdatalog files and open a panel for each.
     void openFolder(const std::string& path);
@@ -59,11 +52,6 @@ private:
     bool tryAddIITDatalog(const std::string& filepath, const std::string& label,
                           int64_t& t_min, int64_t& t_max);
 
-    /// Try to open @p filepath as a Prophesee RAW event stream and append a panel.
-    /// Updates @p t_min / @p t_max with the stream's time range.
-    bool tryAddPropheseeRaw(const std::string& filepath, const std::string& label,
-                            int64_t& t_min, int64_t& t_max);
-
     /// Try to open @p filepath as a video and append a panel.
     /// Updates @p t_min / @p t_max with the resulting time range.
     bool tryAddVideo(const std::string& filepath, const std::string& label,
@@ -75,7 +63,6 @@ private:
                          int64_t& t_min, int64_t& t_max);
 
     static bool isIITDatalogCandidate(const std::string& filepath);
-    static bool isPropheseeRawCandidate(const std::string& filepath);
     static bool isMp4Candidate(const std::string& filepath);
     /// Returns true when @p dir_path is a directory containing more than 50
     /// PNG/JPG image files (non-recursive scan).
@@ -90,13 +77,7 @@ private:
     bool        wants_quit_{false};
     bool        show_open_file_dialog_{false};
     bool        show_open_folder_dialog_{false};
-    std::atomic<bool>   loading_active_{false};
-    std::atomic<bool>   loading_done_{false};
-    std::atomic<float>  loading_progress_{0.f};
-    std::thread         loading_thread_;
-    std::mutex          loading_mutex_;
-    std::string         loading_stage_;
-    std::function<void(float, const std::string&)> load_progress_cb_;
+    bool        layout_pending_{false};
     std::string status_message_;
 };
 

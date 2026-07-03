@@ -24,6 +24,7 @@ find_library(SWSCALE_LIB  swscale  REQUIRED)
 # OpenEB / Metavision SDK — Prophesee RAW event decoding
 # ---------------------------------------------------------------------------
 find_package(MetavisionSDK 5.2.0 REQUIRED COMPONENTS stream)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc videoio)
 
 # OpenEB is installed under /usr/local in the Linux devcontainer.  Use a
 # transitive build rpath so Metavision's indirect shared-library dependencies
@@ -50,6 +51,8 @@ add_library(mustard STATIC
     src/data/events/IITDatalogStream.cpp
     src/data/events/PropheseeRawLoader.cpp
     src/data/events/PropheseeRawStream.cpp
+    src/data/events/PropheseeLiveBuffer.cpp
+    src/data/events/PropheseeLiveStream.cpp
     src/annotation/BoundingBox.cpp
     src/annotation/EyeTracking.cpp
     src/annotation/AnnotationStore.cpp
@@ -69,11 +72,14 @@ add_executable(mustard_app
     src/ui/ViewerPanel.cpp
     src/ui/DVSViewerPanel.cpp
     src/ui/RGBVideoPanel.cpp
+    src/ui/RGBFrameConversion.cpp
+    src/ui/RGBLivePanel.cpp
     src/ui/ImageListPanel.cpp
 )
-target_include_directories(mustard_app PRIVATE ${FFMPEG_INCLUDE_DIR} third_party/stb)
+target_include_directories(mustard_app PRIVATE ${FFMPEG_INCLUDE_DIR} ${OpenCV_INCLUDE_DIRS} third_party/stb)
 target_link_libraries(mustard_app PRIVATE mustard imgui glfw glad ImGuiFileDialog
-    ${AVCODEC_LIB} ${AVFORMAT_LIB} ${AVUTIL_LIB} ${SWSCALE_LIB})
+    ${AVCODEC_LIB} ${AVFORMAT_LIB} ${AVUTIL_LIB} ${SWSCALE_LIB}
+    ${OpenCV_LIBS})
 target_compile_definitions(mustard_app PRIVATE IMGUI_IMPL_OPENGL_LOADER_GLAD2)
 # In the Linux devcontainer many optional FFmpeg codec plugin libs are empty
 # stubs. Allow unresolved transitive shared-library symbols at link time so the

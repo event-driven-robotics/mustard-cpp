@@ -21,6 +21,7 @@ public:
     int64_t endTime()        const noexcept { return end_time_; }
     bool    isPlaying()      const noexcept { return is_playing_; }
     double  playbackSpeed()  const noexcept { return playback_speed_; }
+    bool    isLiveMode()     const noexcept { return live_mode_; }
 
     // ------------------------------------------------------------------
     // Mutators
@@ -29,6 +30,7 @@ public:
     void seekTo(int64_t t);
     void setPlaying(bool playing);
     void setPlaybackSpeed(double speed);
+    void setLiveMode(bool live);
 
     /// Advance the playhead by @p delta_seconds of wall-clock time.
     /// Notifies observers if the time changed.
@@ -48,6 +50,7 @@ private:
     int64_t end_time_{0};
     bool    is_playing_{false};
     double  playback_speed_{1.0};
+    bool    live_mode_{false};
 
     std::vector<std::function<void(int64_t)>> observers_;
 };
