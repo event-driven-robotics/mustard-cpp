@@ -34,7 +34,10 @@ Event streams can be displayed with three representations:
 - Ternary Image: positive, negative, and inactive pixels in a compact image view
 
 The event viewer includes an accumulation-window slider so the same stream can
-be inspected at different temporal scales.
+be inspected at different temporal scales. Histogram mode also provides a
+saturation slider: the lower of its event-count value and the current frame's
+peak count maps to full brightness (255); higher counts are clipped and lower
+counts are scaled proportionally.
 
 Mustard also supports annotation overlays:
 

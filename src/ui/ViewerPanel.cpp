@@ -4,14 +4,27 @@
 #include "mustard/annotation/EyeTracking.h"
 #include "ImGuiFileDialog.h"
 #include "imgui.h"
+#include <opencv2/imgproc.hpp>
+#include <opencv2/videoio.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <string>
 #include <vector>
 
 namespace mustard {
+
+struct ViewerPanel::ExportJob {
+    cv::VideoWriter writer;
+    VideoExportSettings settings;
+    cv::Size size;
+    int64_t next_time_us{0};
+    int64_t frame_step_us{0};
+    int64_t frame_count{0};
+    int64_t frame_index{0};
+};
 
 namespace {
 
@@ -79,11 +92,18 @@ void remove_eye_tracking_annotations_in_bin(AnnotationStore& store, int64_t t) {
 
 } // namespace
 
+ViewerPanel::~ViewerPanel() = default;
+
+ViewerPanel::ViewerPanel(std::string label) : label_(std::move(label)) {}
+ViewerPanel::ViewerPanel(ViewerPanel&&) = default;
+ViewerPanel& ViewerPanel::operator=(ViewerPanel&&) = default;
+
 void ViewerPanel::setAnnotationStore(std::shared_ptr<AnnotationStore> store) {
     ann_store_ = std::move(store);
 }
 
 void ViewerPanel::drawAnnotationControls() {
+    advanceVideoExport();
     if (!annotating_) {
         if (ImGui::Button("Annotate")) {
             ImGui::OpenPopup("##ann_type");
@@ -137,7 +157,165 @@ void ViewerPanel::drawAnnotationControls() {
         }
         ImGuiFileDialog::Instance()->Close();
     }
+
+    if (!export_settings_initialized_) {
+        export_settings_.start_us = streamStartUs();
+        export_settings_.end_us = streamEndUs();
+        export_settings_initialized_ = true;
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Export Video")) {
+        ImGui::OpenPopup(("Export settings##" + label_).c_str());
+    }
+    if (!export_status_.empty()) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", export_status_.c_str());
+    }
+    if (exporting_) {
+        ImGui::SameLine();
+        ImGui::ProgressBar(export_progress_, ImVec2(120.f, 0.f), "Exporting");
+    }
+
+    const std::string popup_key = "Export settings##" + label_;
+    if (ImGui::BeginPopupModal(popup_key.c_str(), nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("Export range (seconds from stream start)");
+        const int64_t stream_start = streamStartUs();
+        const int64_t stream_end = streamEndUs();
+        const float stream_duration_s = static_cast<float>(stream_end - stream_start) / 1e6f;
+        float start_s = static_cast<float>(export_settings_.start_us - stream_start) / 1e6f;
+        float end_s = static_cast<float>(export_settings_.end_us - stream_start) / 1e6f;
+        ImGui::InputFloat("Start (s)", &start_s, 0.1f, 1.f, "%.3f");
+        ImGui::InputFloat("End (s)", &end_s, 0.1f, 1.f, "%.3f");
+        start_s = std::clamp(start_s, 0.f, stream_duration_s);
+        end_s = std::clamp(end_s, 0.f, stream_duration_s);
+        export_settings_.start_us = stream_start + static_cast<int64_t>(start_s * 1e6f);
+        export_settings_.end_us = stream_start + static_cast<int64_t>(end_s * 1e6f);
+        ImGui::InputInt("FPS", &export_settings_.fps);
+        export_settings_.fps = std::clamp(export_settings_.fps, 1, 240);
+        ImGui::Checkbox("Include annotations", &export_settings_.include_annotations);
+        ImGui::Checkbox("Lossless (FFV1 in MKV)", &export_settings_.lossless);
+        if (export_settings_.lossless) {
+            ImGui::TextDisabled("Lossless files use the .mkv extension and can be large.");
+        }
+        if (export_settings_.end_us <= export_settings_.start_us) {
+            ImGui::TextDisabled("End must be after start.");
+        }
+        if (ImGui::Button("Choose File...", {120.f, 0.f}) &&
+            export_settings_.end_us > export_settings_.start_us) {
+            ImGuiFileDialog::Instance()->OpenDialog(
+                "ExportVideo_" + label_, "Export Video", ".mp4,.mkv",
+                ".", export_settings_.lossless ? "export.mkv" : "export.mp4", 1, nullptr,
+                ImGuiFileDialogFlags_ConfirmOverwrite);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+
+    const std::string export_dialog_key = "ExportVideo_" + label_;
+    if (ImGuiFileDialog::Instance()->Display(
+            export_dialog_key.c_str(), ImGuiWindowFlags_NoCollapse,
+            ImVec2(600.f, 400.f))) {
+        if (ImGuiFileDialog::Instance()->IsOk()) {
+            std::string error;
+            if (!startVideoExport(ImGuiFileDialog::Instance()->GetFilePathName(), error))
+                export_status_ = "Export failed: " + error;
+        }
+        ImGuiFileDialog::Instance()->Close();
+    }
 }
+
+bool ViewerPanel::startVideoExport(const std::string& output_path,
+                                   std::string& error) {
+    if (output_path.empty()) {
+        error = "no output file selected";
+        return false;
+    }
+    if (export_settings_.lossless &&
+        std::filesystem::path(output_path).extension() != ".mkv") {
+        error = "lossless export requires an .mkv output file";
+        return false;
+    }
+    beginVideoExport();
+    std::vector<uint8_t> rgba;
+    int width = 0;
+    int height = 0;
+    if (!renderFrameForExport(export_settings_.start_us, rgba, width, height) ||
+        width <= 0 || height <= 0) {
+        error = "could not render the first frame";
+        endVideoExport();
+        return false;
+    }
+
+    cv::VideoWriter writer;
+    const cv::Size size(width, height);
+    const int codec = export_settings_.lossless
+        ? cv::VideoWriter::fourcc('F', 'F', 'V', '1')
+        : cv::VideoWriter::fourcc('m', 'p', '4', 'v');
+    if (!writer.open(output_path, codec,
+                     export_settings_.fps, size, true)) {
+        error = "could not open output file";
+        return false;
+    }
+    export_job_ = std::make_unique<ExportJob>();
+    export_job_->writer = std::move(writer);
+    export_job_->settings = export_settings_;
+    export_job_->size = size;
+    export_job_->next_time_us = export_settings_.start_us;
+    export_job_->frame_step_us = std::max<int64_t>(1, 1'000'000 / export_settings_.fps);
+    export_job_->frame_count = std::max<int64_t>(1,
+        (export_settings_.end_us - export_settings_.start_us + export_job_->frame_step_us - 1) /
+        export_job_->frame_step_us);
+    export_progress_ = 0.f;
+    exporting_ = true;
+    export_status_ = "Exporting video";
+    return true;
+}
+
+void ViewerPanel::advanceVideoExport() {
+    if (!export_job_) return;
+    ExportJob& job = *export_job_;
+    std::vector<uint8_t> rgba;
+    int width = 0;
+    int height = 0;
+    const int64_t t = job.next_time_us;
+    if (t < job.settings.end_us) {
+        if (!renderFrameForExport(t, rgba, width, height) ||
+            width != job.size.width || height != job.size.height ||
+            rgba.size() != static_cast<std::size_t>(width * height * 4)) {
+            export_status_ = "Export failed: could not render an export frame";
+            endVideoExport();
+            export_job_.reset();
+            exporting_ = false;
+            return;
+        }
+        cv::Mat rgba_frame(height, width, CV_8UC4, rgba.data());
+        cv::Mat bgr_frame;
+        cv::cvtColor(rgba_frame, bgr_frame, cv::COLOR_RGBA2BGR);
+        job.writer.write(bgr_frame);
+        ++job.frame_index;
+        job.next_time_us += job.frame_step_us;
+        export_progress_ = static_cast<float>(job.frame_index) /
+                           static_cast<float>(job.frame_count);
+        return;
+    }
+    export_status_ = "Video exported";
+    export_progress_ = 1.f;
+    endVideoExport();
+    export_job_.reset();
+    exporting_ = false;
+}
+
+bool ViewerPanel::renderFrameForExport(int64_t, std::vector<uint8_t>&,
+                                       int&, int&) {
+    return false;
+}
+
+void ViewerPanel::beginVideoExport() {}
+void ViewerPanel::endVideoExport() {}
 
 void ViewerPanel::drawAnnotationInteraction(ImVec2 img_origin, float scale, int64_t t) {
     if (!annotating_ || !ann_store_) {

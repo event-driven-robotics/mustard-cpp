@@ -87,6 +87,20 @@ void DVSViewerPanel::draw() {
         if (cur >= 0) onTimeChanged(cur);
     }
 
+    if (rep_mode_ == RepresentationMode::kHistogram) {
+        ImGui::SameLine();
+        ImGui::TextUnformatted("Saturate at:");
+        ImGui::SameLine();
+        int saturation_count = histogram_saturation_count_;
+        ImGui::SetNextItemWidth(120.f);
+        if (ImGui::SliderInt("##histogram_saturation_count", &saturation_count,
+                             1, 100, "%d events", ImGuiSliderFlags_Logarithmic)) {
+            const int64_t cur = last_time_;
+            setHistogramSaturationCount(static_cast<uint16_t>(saturation_count));
+            if (cur >= 0) onTimeChanged(cur);
+        }
+    }
+
     // Annotation toolbar (Annotate / Stop / Save)
     ImGui::SameLine(0.f, 16.f);
     drawAnnotationControls();
@@ -139,6 +153,54 @@ void DVSViewerPanel::draw() {
     ImGui::End();
 }
 
+bool DVSViewerPanel::renderFrameForExport(int64_t stream_time_us,
+                                           std::vector<uint8_t>& rgba,
+                                           int& width, int& height) {
+    // onTimeChanged expects global time; convert the requested native stream
+    // timestamp back through this panel's timeline offset.
+    const int64_t displayed_time = last_time_;
+    const int64_t live_accum_window = accum_window_us_;
+    const uint16_t live_saturation = histogram_saturation_count_;
+    const EventTheme live_theme = event_theme_;
+    const RepresentationMode live_rep_mode = rep_mode_;
+    if (export_settings_frozen_) {
+        accum_window_us_ = export_accum_window_us_;
+        histogram_saturation_count_ = export_saturation_count_;
+        event_theme_ = export_event_theme_;
+        rep_mode_ = export_rep_mode_;
+    }
+    last_time_ = -1;
+    onTimeChanged(stream_time_us + start_offset_us_ - stream_->startTime());
+    if (pixels_.empty() || tex_w_ <= 0 || tex_h_ <= 0) return false;
+    rgba = pixels_;
+    width = tex_w_;
+    height = tex_h_;
+    // Restore the current live settings: they may have changed while export
+    // was running and must never be overwritten by the frozen snapshot.
+    accum_window_us_ = live_accum_window;
+    histogram_saturation_count_ = live_saturation;
+    event_theme_ = live_theme;
+    rep_mode_ = live_rep_mode;
+    // Exporting must not replace the frame shown by the interactive timeline.
+    if (displayed_time >= 0) {
+        last_time_ = -1;
+        onTimeChanged(displayed_time);
+    }
+    return true;
+}
+
+void DVSViewerPanel::beginVideoExport() {
+    export_accum_window_us_ = accum_window_us_;
+    export_saturation_count_ = histogram_saturation_count_;
+    export_event_theme_ = event_theme_;
+    export_rep_mode_ = rep_mode_;
+    export_settings_frozen_ = true;
+}
+
+void DVSViewerPanel::endVideoExport() {
+    export_settings_frozen_ = false;
+}
+
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
@@ -176,11 +238,11 @@ void DVSViewerPanel::uploadTexture() {
 }
 
 void DVSViewerPanel::clearPixels() {
-    // Dark background (R=20, G=20, B=20, A=255)
+    const uint8_t background = event_theme_ == EventTheme::kEdpr ? 255 : 20;
     for (std::size_t i = 0; i < pixels_.size(); i += 4) {
-        pixels_[i + 0] = 20;
-        pixels_[i + 1] = 20;
-        pixels_[i + 2] = 20;
+        pixels_[i + 0] = background;
+        pixels_[i + 1] = background;
+        pixels_[i + 2] = background;
         pixels_[i + 3] = 255;
     }
 }
@@ -192,6 +254,25 @@ void DVSViewerPanel::setRepresentationMode(RepresentationMode mode) noexcept {
 
 DVSViewerPanel::RepresentationMode DVSViewerPanel::representationMode() const noexcept {
     return rep_mode_;
+}
+
+void DVSViewerPanel::setHistogramSaturationCount(uint16_t count) noexcept {
+    histogram_saturation_count_ = std::max<uint16_t>(count, 1);
+    last_time_ = -1; // force repaint on next onTimeChanged
+}
+
+void DVSViewerPanel::setEventTheme(EventTheme theme) noexcept {
+    if (event_theme_ == theme) return;
+    event_theme_ = theme;
+    if (last_time_ >= 0) {
+        const int64_t current_time = last_time_;
+        last_time_ = -1;
+        onTimeChanged(current_time);
+    }
+}
+
+DVSViewerPanel::EventTheme DVSViewerPanel::eventTheme() const noexcept {
+    return event_theme_;
 }
 
 // ---------------------------------------------------------------------------
@@ -224,18 +305,20 @@ void DVSViewerPanel::renderHistogram(int64_t ct_start, int64_t accum_t0, int64_t
         }
     }
 
-    // Find max total count for normalisation
-    float max_total = 1.f;
+    float frame_max_count = 1.f;
     for (int y = 0; y < tex_h_; ++y) {
         for (int x = 0; x < tex_w_; ++x) {
-            const std::size_t idx   = static_cast<std::size_t>(y * tex_w_ + x);
-            const float       total = aux_surface_[idx]
+            const std::size_t idx = static_cast<std::size_t>(y * tex_w_ + x);
+            const float total = aux_surface_[idx]
                 + static_cast<float>(static_cast<uint8_t>(aux_polarity_[idx]));
-            if (total > max_total) max_total = total;
+            frame_max_count = std::max(frame_max_count, total);
         }
     }
 
-    const float inv_max = 1.f / max_total;
+    // A high slider value never darkens a sparse frame: use its actual peak.
+    const float scale_max = std::min(
+        static_cast<float>(histogram_saturation_count_), frame_max_count);
+    const float inv_scale_max = 1.f / scale_max;
 
     for (int y = 0; y < tex_h_; ++y) {
         for (int x = 0; x < tex_w_; ++x) {
@@ -245,14 +328,17 @@ void DVSViewerPanel::renderHistogram(int64_t ct_start, int64_t accum_t0, int64_t
             const float       total    = on_cnt + off_cnt;
             if (total < 0.5f) continue; // background stays
 
-            const auto        br       = static_cast<uint8_t>(std::min(total * inv_max, 1.f) * 255.f);
+            const auto        br       = static_cast<uint8_t>(
+                std::min(total * inv_scale_max, 1.f) * 255.f);
             const std::size_t pix      = idx * 4;
             if (on_cnt >= off_cnt) {
                 // ON dominant (or tie) → green
                 pixels_[pix + 0] = 0;   pixels_[pix + 1] = br;  pixels_[pix + 2] = 0;
             } else {
-                // OFF dominant → red
-                pixels_[pix + 0] = br;  pixels_[pix + 1] = 0;   pixels_[pix + 2] = 0;
+                // OFF dominant → red (jaer) or purple (edpr)
+                pixels_[pix + 0] = br;
+                pixels_[pix + 1] = 0;
+                pixels_[pix + 2] = event_theme_ == EventTheme::kEdpr ? br : 0;
             }
             pixels_[pix + 3] = 255;
         }
@@ -292,7 +378,9 @@ void DVSViewerPanel::renderTimeSurface(int64_t ct_start, int64_t accum_t0, int64
             if (aux_polarity_[aux] == int8_t{1}) {
                 pixels_[pix + 0] = 0;   pixels_[pix + 1] = br;  pixels_[pix + 2] = 0;
             } else {
-                pixels_[pix + 0] = br;  pixels_[pix + 1] = 0;   pixels_[pix + 2] = 0;
+                pixels_[pix + 0] = br;
+                pixels_[pix + 1] = 0;
+                pixels_[pix + 2] = event_theme_ == EventTheme::kEdpr ? br : 0;
             }
             pixels_[pix + 3] = 255;
         }
@@ -300,10 +388,10 @@ void DVSViewerPanel::renderTimeSurface(int64_t ct_start, int64_t accum_t0, int64
 }
 
 void DVSViewerPanel::renderTernaryImage(int64_t ct_start, int64_t accum_t0, int64_t t_now) {
-    // Background: 50% grey
+    const uint8_t background = event_theme_ == EventTheme::kEdpr ? 255 : 20;
     for (std::size_t i = 0; i < pixels_.size(); i += 4) {
-        pixels_[i + 0] = 128; pixels_[i + 1] = 128;
-        pixels_[i + 2] = 128; pixels_[i + 3] = 255;
+        pixels_[i + 0] = background; pixels_[i + 1] = background;
+        pixels_[i + 2] = background; pixels_[i + 3] = 255;
     }
     std::fill(aux_polarity_.begin(), aux_polarity_.end(), int8_t{-1});
 
@@ -325,11 +413,13 @@ void DVSViewerPanel::renderTernaryImage(int64_t ct_start, int64_t accum_t0, int6
             if (aux_polarity_[aux] < int8_t{0}) continue; // grey stays
             const std::size_t pix = aux * 4;
             if (aux_polarity_[aux] == int8_t{1}) {
-                // ON → white
-                pixels_[pix + 0] = 255; pixels_[pix + 1] = 255; pixels_[pix + 2] = 255;
+                // ON → green
+                pixels_[pix + 0] = 0; pixels_[pix + 1] = 255; pixels_[pix + 2] = 0;
             } else {
-                // OFF → black
-                pixels_[pix + 0] = 0;   pixels_[pix + 1] = 0;   pixels_[pix + 2] = 0;
+                // OFF → red (jaer) or purple (edpr)
+                pixels_[pix + 0] = 255;
+                pixels_[pix + 1] = 0;
+                pixels_[pix + 2] = event_theme_ == EventTheme::kEdpr ? 255 : 0;
             }
             pixels_[pix + 3] = 255;
         }
@@ -345,10 +435,10 @@ void DVSViewerPanel::paintEvent(int x, int y, bool polarity) {
         pixels_[idx + 2] = 80;
         pixels_[idx + 3] = 255;
     } else {
-        // OFF event → red
+        // OFF event → red (jaer) or purple (edpr)
         pixels_[idx + 0] = 255;
         pixels_[idx + 1] = 60;
-        pixels_[idx + 2] = 60;
+        pixels_[idx + 2] = event_theme_ == EventTheme::kEdpr ? 255 : 60;
         pixels_[idx + 3] = 255;
     }
 }

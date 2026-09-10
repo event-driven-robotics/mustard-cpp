@@ -24,8 +24,8 @@ add_executable(test_dvsviewer_panel
     ${CMAKE_SOURCE_DIR}/src/ui/DVSViewerPanel.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/ViewerPanel.cpp
 )
-target_link_libraries(test_dvsviewer_panel PRIVATE mustard glad imgui ImGuiFileDialog GTest::gtest_main)
-target_include_directories(test_dvsviewer_panel PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(test_dvsviewer_panel PRIVATE mustard glad imgui ImGuiFileDialog ${OpenCV_LIBS} GTest::gtest_main)
+target_include_directories(test_dvsviewer_panel PRIVATE ${CMAKE_SOURCE_DIR}/include ${OpenCV_INCLUDE_DIRS})
 add_test(NAME test_dvsviewer_panel COMMAND test_dvsviewer_panel)
 
 # Annotation store tests — no OpenGL calls at runtime; imgui is needed because

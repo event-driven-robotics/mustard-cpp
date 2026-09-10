@@ -71,6 +71,17 @@ void RGBLivePanel::draw() {
     ImGui::End();
 }
 
+bool RGBLivePanel::renderFrameForExport(int64_t,
+                                         std::vector<uint8_t>& rgba,
+                                         int& width, int& height) {
+    copyLatestFrame();
+    if (pixels_.empty() || tex_w_ <= 0 || tex_h_ <= 0) return false;
+    rgba = pixels_;
+    width = tex_w_;
+    height = tex_h_;
+    return true;
+}
+
 void RGBLivePanel::captureLoop(int camera_index) {
     cv::VideoCapture cap(camera_index);
     if (!cap.isOpened()) {

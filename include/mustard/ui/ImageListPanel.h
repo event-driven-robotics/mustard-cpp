@@ -51,6 +51,9 @@ public:
     }
 
 private:
+    bool renderFrameForExport(int64_t stream_time_us,
+                              std::vector<uint8_t>& rgba,
+                              int& width, int& height) override;
     /// Load the image at @p index into pixels_. Returns true on success.
     bool loadImageAt(int index);
     void uploadTexture();

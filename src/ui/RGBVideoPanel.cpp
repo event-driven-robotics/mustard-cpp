@@ -48,10 +48,11 @@ struct RGBVideoPanel::FFmpegCtx {
 RGBVideoPanel::RGBVideoPanel(std::string filepath,
                              std::string label,
                              std::function<void(float, const std::string&)> progress_cb)
-    : ViewerPanel(std::move(label)), progress_cb_(std::move(progress_cb))
+    : ViewerPanel(std::move(label)), filepath_(std::move(filepath)),
+      progress_cb_(std::move(progress_cb))
 {
     ff_ = std::make_unique<FFmpegCtx>();
-    loaded_ = openVideo(filepath);
+    loaded_ = openVideo(filepath_);
 }
 
 RGBVideoPanel::~RGBVideoPanel() {
@@ -203,6 +204,23 @@ void RGBVideoPanel::closeVideo() {
     duration_us_ = 0;
     last_time_us_ = -1;
     loaded_ = false;
+}
+
+bool RGBVideoPanel::renderFrameForExport(int64_t stream_time_us,
+                                         std::vector<uint8_t>& rgba,
+                                         int& width, int& height) {
+    const int64_t displayed_time = last_time_us_;
+    last_time_us_ = -1;
+    onTimeChanged(stream_time_us + start_offset_us_);
+    if (pixels_.empty() || tex_w_ <= 0 || tex_h_ <= 0) return false;
+    rgba = pixels_;
+    width = tex_w_;
+    height = tex_h_;
+    if (displayed_time >= 0) {
+        last_time_us_ = -1;
+        onTimeChanged(displayed_time);
+    }
+    return true;
 }
 
 // ---------------------------------------------------------------------------

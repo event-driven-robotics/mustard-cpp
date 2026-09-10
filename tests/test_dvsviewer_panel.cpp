@@ -33,6 +33,25 @@ TEST_F(DVSViewerPanelTest, AccumWindowConstantIs33333) {
     EXPECT_EQ(DVSViewerPanel::kAccumWindowUs, int64_t{33'333});
 }
 
+TEST_F(DVSViewerPanelTest, HistogramSaturationCountDefaultsTo255) {
+    DVSViewerPanel panel(nullptr, "test");
+    EXPECT_EQ(panel.histogramSaturationCount(), uint16_t{255});
+}
+
+TEST_F(DVSViewerPanelTest, HistogramSaturationCountIsClampedToAtLeastOne) {
+    DVSViewerPanel panel(nullptr, "test");
+    panel.setHistogramSaturationCount(0);
+    EXPECT_EQ(panel.histogramSaturationCount(), uint16_t{1});
+}
+
+TEST_F(DVSViewerPanelTest, EventThemeDefaultsToJaerAndCanBeChanged) {
+    DVSViewerPanel panel(nullptr, "test");
+    EXPECT_EQ(panel.eventTheme(), DVSViewerPanel::EventTheme::kJaer);
+
+    panel.setEventTheme(DVSViewerPanel::EventTheme::kEdpr);
+    EXPECT_EQ(panel.eventTheme(), DVSViewerPanel::EventTheme::kEdpr);
+}
+
 // ---------------------------------------------------------------------------
 // label() accessor
 // ---------------------------------------------------------------------------

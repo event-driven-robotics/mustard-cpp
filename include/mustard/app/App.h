@@ -1,5 +1,6 @@
 #pragma once
 #include "mustard/core/TimeController.h"
+#include "mustard/ui/DVSViewerPanel.h"
 #include "mustard/ui/ViewerPanel.h"
 
 #include <deque>
@@ -36,6 +37,7 @@ private:
     void openFileOrFolder(const std::string &p);
     void drawFileDialog();
     void drawPlaybackPanel();
+    void setEventTheme(DVSViewerPanel::EventTheme theme);
 
     /// Recursively scan @p path for iitdatalog files and open a panel for each.
     void openFolder(const std::string& path);
@@ -78,6 +80,7 @@ private:
     bool        show_open_file_dialog_{false};
     bool        show_open_folder_dialog_{false};
     bool        layout_pending_{false};
+    DVSViewerPanel::EventTheme event_theme_{DVSViewerPanel::EventTheme::kJaer};
     std::string status_message_;
 };
 

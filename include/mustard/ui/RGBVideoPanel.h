@@ -49,6 +49,10 @@ public:
 private:
     bool openVideo(const std::string& filepath);
     void closeVideo();
+    /// Copy the input streams into a new container without re-encoding.
+    bool renderFrameForExport(int64_t stream_time_us,
+                              std::vector<uint8_t>& rgba,
+                              int& width, int& height) override;
     bool seekAndDecode(int64_t video_time_us);
     void uploadTexture();
 
@@ -65,6 +69,7 @@ private:
     int64_t duration_us_{0};
     int64_t last_time_us_{-1};
     bool    loaded_{false};
+    std::string filepath_;
     std::function<void(float, const std::string&)> progress_cb_;
 };
 

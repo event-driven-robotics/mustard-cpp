@@ -15,9 +15,7 @@ namespace mustard {
 
 /// ImGui panel that renders accumulated DVS events as a colour-coded texture.
 ///
-/// ON events  (polarity=true)  → green pixels.
-/// OFF events (polarity=false) → red pixels.
-/// Background                  → dark grey.
+/// Event colours and background are selected with EventTheme.
 ///
 /// Events are accumulated in a rolling window of kAccumWindowUs ending at
 /// the current playhead time.
@@ -29,8 +27,14 @@ public:
     /// Controls how accumulated events are visualised in the panel.
     enum class RepresentationMode {
         kHistogram,    ///< Colour-coded event accumulation (default).
-        kTimeSurface,  ///< Per-pixel recency heatmap (green=ON, red=OFF).
-        kTernaryImage, ///< Three states: ON=white / OFF=black / none=grey.
+        kTimeSurface,  ///< Per-pixel recency heatmap using the selected palette.
+        kTernaryImage, ///< Last polarity at each pixel, using the selected palette.
+    };
+
+    /// Colour palette used to render DVS events.
+    enum class EventTheme {
+        kJaer, ///< Dark background, green ON events, red OFF events.
+        kEdpr, ///< White background, green ON events, purple OFF events.
     };
 
     explicit DVSViewerPanel(std::shared_ptr<DVSEventStream> stream,
@@ -65,7 +69,21 @@ public:
     void               setRepresentationMode(RepresentationMode mode) noexcept;
     RepresentationMode representationMode() const noexcept;
 
+    /// Set/get the Histogram event count that reaches full brightness (1–65535).
+    /// The lower of this threshold and the frame peak maps to 255.
+    void     setHistogramSaturationCount(uint16_t count) noexcept;
+    uint16_t histogramSaturationCount() const noexcept { return histogram_saturation_count_; }
+
+    /// Set/get the colour palette used by all event representations.
+    void       setEventTheme(EventTheme theme) noexcept;
+    EventTheme eventTheme() const noexcept;
+
 private:
+    void beginVideoExport() override;
+    void endVideoExport() override;
+    bool renderFrameForExport(int64_t stream_time_us,
+                              std::vector<uint8_t>& rgba,
+                              int& width, int& height) override;
     void ensureTexture(int w, int h);
     void uploadTexture();
     void clearPixels();
@@ -83,11 +101,20 @@ private:
 
     int64_t last_time_{-1};
     int64_t accum_window_us_{kAccumWindowUs};
+    uint16_t histogram_saturation_count_{255};
+    EventTheme event_theme_{EventTheme::kJaer};
 
     // Annotation interaction state
     RepresentationMode               rep_mode_{RepresentationMode::kHistogram};
     std::vector<float>               aux_surface_;   ///< Per-pixel float workspace.
     std::vector<int8_t>              aux_polarity_;  ///< Per-pixel last polarity: -1=none, 0=OFF, 1=ON.
+
+    // Frozen at export start so live controls cannot alter an in-flight file.
+    bool                 export_settings_frozen_{false};
+    int64_t              export_accum_window_us_{kAccumWindowUs};
+    uint16_t             export_saturation_count_{255};
+    EventTheme           export_event_theme_{EventTheme::kJaer};
+    RepresentationMode   export_rep_mode_{RepresentationMode::kHistogram};
 };
 
 } // namespace mustard

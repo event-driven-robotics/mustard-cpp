@@ -131,6 +131,24 @@ void ImageListPanel::draw() {
     ImGui::End();
 }
 
+bool ImageListPanel::renderFrameForExport(int64_t stream_time_us,
+                                           std::vector<uint8_t>& rgba,
+                                           int& width, int& height) {
+    const int displayed_index = last_index_;
+    last_index_ = -1;
+    onTimeChanged(stream_time_us + start_offset_us_);
+    if (pixels_.empty() || tex_w_ <= 0 || tex_h_ <= 0) return false;
+    rgba = pixels_;
+    width = tex_w_;
+    height = tex_h_;
+    if (displayed_index >= 0) {
+        last_index_ = -1;
+        onTimeChanged(static_cast<int64_t>(displayed_index) * kFrameDurationUs +
+                      start_offset_us_);
+    }
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // Private — on-demand image load
 // ---------------------------------------------------------------------------

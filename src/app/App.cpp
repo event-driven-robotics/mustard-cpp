@@ -123,6 +123,18 @@ void App::drawMenuBar() {
             ImGui::EndMenu();
         }
 
+        if (ImGui::BeginMenu("View")) {
+            if (ImGui::MenuItem("jaer", nullptr,
+                                event_theme_ == DVSViewerPanel::EventTheme::kJaer)) {
+                setEventTheme(DVSViewerPanel::EventTheme::kJaer);
+            }
+            if (ImGui::MenuItem("edpr", nullptr,
+                                event_theme_ == DVSViewerPanel::EventTheme::kEdpr)) {
+                setEventTheme(DVSViewerPanel::EventTheme::kEdpr);
+            }
+            ImGui::EndMenu();
+        }
+
         if (!status_message_.empty()) {
             ImGui::Separator();
             ImGui::TextDisabled("%s", status_message_.c_str());
@@ -138,6 +150,15 @@ void App::drawMenuBar() {
     }
     if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_O, /*repeat=*/false)) {
         show_open_folder_dialog_ = true;
+    }
+}
+
+void App::setEventTheme(DVSViewerPanel::EventTheme theme) {
+    event_theme_ = theme;
+    for (const auto& viewer : viewers_) {
+        if (auto* dvs_viewer = dynamic_cast<DVSViewerPanel*>(viewer.get())) {
+            dvs_viewer->setEventTheme(theme);
+        }
     }
 }
 
@@ -337,6 +358,7 @@ bool App::tryAddIITDatalog(const std::string& filepath, const std::string& label
     t_max = std::max(t_max, stream->endTime());
 
     auto panel = std::make_unique<DVSViewerPanel>(stream, label);
+    panel->setEventTheme(event_theme_);
     panel->setAnnotationStore(std::make_shared<AnnotationStore>());
     // Raw pointer is valid as long as viewers_ is alive, which outlives time_ctrl_.
     DVSViewerPanel* raw = panel.get();

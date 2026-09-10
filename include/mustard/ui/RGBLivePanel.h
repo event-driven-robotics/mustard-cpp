@@ -30,6 +30,9 @@ public:
     int64_t streamEndUs() const noexcept override { return last_time_us_; }
 
 private:
+    bool renderFrameForExport(int64_t stream_time_us,
+                              std::vector<uint8_t>& rgba,
+                              int& width, int& height) override;
     void captureLoop(int camera_index);
     bool copyLatestFrame();
     void uploadTexture();

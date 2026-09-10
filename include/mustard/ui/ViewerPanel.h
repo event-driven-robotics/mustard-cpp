@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace mustard {
 
@@ -20,6 +21,14 @@ enum class EyeTrackingDragMode {
     kMoveCenter,
 };
 
+struct VideoExportSettings {
+    int64_t start_us{0};
+    int64_t end_us{0};
+    int     fps{30};
+    bool    include_annotations{true};
+    bool    lossless{false};
+};
+
 /// Abstract base class for all viewer panels.
 ///
 /// Concrete panels inherit from this class and implement draw() and
@@ -31,15 +40,15 @@ enum class EyeTrackingDragMode {
 /// duplicate that logic.
 class ViewerPanel {
 public:
-    explicit ViewerPanel(std::string label) : label_(std::move(label)) {}
-    virtual ~ViewerPanel() = default;
+    explicit ViewerPanel(std::string label);
+    virtual ~ViewerPanel();
 
     // Non-copyable; moveable (explicitly defaulted because the virtual
     // destructor suppresses the implicit move constructor).
     ViewerPanel(const ViewerPanel&)            = delete;
     ViewerPanel& operator=(const ViewerPanel&) = delete;
-    ViewerPanel(ViewerPanel&&)                 = default;
-    ViewerPanel& operator=(ViewerPanel&&)      = default;
+    ViewerPanel(ViewerPanel&&);
+    ViewerPanel& operator=(ViewerPanel&&);
 
     /// Emit all ImGui commands for this panel (one standalone window).
     virtual void draw() = 0;
@@ -76,6 +85,9 @@ protected:
     // ------------------------------------------------------------------
 
     std::shared_ptr<AnnotationStore> ann_store_;
+    std::string export_status_;
+    float       export_progress_{0.f};
+    bool        exporting_{false};
     bool           annotating_{false};
     AnnotationType annotation_type_{AnnotationType::kBoundingBox};
 
@@ -99,6 +111,17 @@ protected:
     /// Call once per frame from within an ImGui::Begin…End block.
     void drawAnnotationControls();
 
+    /// Produce the panel's native RGBA rendering at a stream-local timestamp.
+    /// The shared exporter encodes these frames into an MP4.
+    virtual bool renderFrameForExport(int64_t stream_time_us,
+                                      std::vector<uint8_t>& rgba,
+                                      int& width, int& height);
+    virtual void beginVideoExport();
+    virtual void endVideoExport();
+
+    VideoExportSettings export_settings_;
+    bool export_settings_initialized_{false};
+
     /// Handle bbox click-drag interaction and commit to ann_store_.
     /// Call immediately after ImGui::Image when the image is valid.
     /// @param img_origin  Top-left of the image in screen space.
@@ -109,6 +132,12 @@ protected:
     /// Render all annotations from ann_store_ at timestamp @p t as overlay.
     /// Call after ImGui::Image (and after interaction) when the image is valid.
     void drawAnnotationOverlay(ImVec2 img_origin, float scale, int64_t t) const;
+
+private:
+    struct ExportJob;
+    bool startVideoExport(const std::string& output_path, std::string& error);
+    void advanceVideoExport();
+    std::unique_ptr<ExportJob> export_job_;
 };
 
 } // namespace mustard
