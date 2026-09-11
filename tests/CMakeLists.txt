@@ -50,6 +50,11 @@ add_test(NAME test_rgb_frame_conversion COMMAND test_rgb_frame_conversion)
 # Synthetic-data loader test (writes a temp file in /tmp — no sample files)
 mustard_add_test(test_iitdatalog_loader test_iitdatalog_loader.cpp)
 mustard_add_test(test_prophesee_raw_loader test_prophesee_raw_loader.cpp)
+mustard_add_test(test_csv_event_source test_csv_event_source.cpp)
+mustard_add_test(test_hdf5_event_source test_hdf5_event_source.cpp)
+target_link_libraries(test_hdf5_event_source PRIVATE HDF5::HDF5)
+mustard_add_test(test_tabular_event_loader test_tabular_event_loader.cpp)
+mustard_add_test(test_event_import_session test_event_import_session.cpp)
 
 # ---------------------------------------------------------------------------
 # Integration test — uses the real data.log sample (git-lfs tracked)

@@ -34,3 +34,5 @@ CTestTestfile.cmake
 __pycache__/
 *.pyc
 *.pyo
+
+imgui.ini

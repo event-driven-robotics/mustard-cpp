@@ -59,29 +59,32 @@ int main() {
     ImGui_ImplGlfw_InitForOpenGL(window, /*install_callbacks=*/true);
     ImGui_ImplOpenGL3_Init("#version 330 core");
 
-    mustard::App app;
+    {
+        mustard::App app;
 
-    while (!glfwWindowShouldClose(window) && !app.wantsQuit()) {
-        glfwPollEvents();
+        while (!glfwWindowShouldClose(window) && !app.wantsQuit()) {
+            glfwPollEvents();
 
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
+            ImGui_ImplOpenGL3_NewFrame();
+            ImGui_ImplGlfw_NewFrame();
+            ImGui::NewFrame();
 
-        ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
-        app.tick(ImGui::GetIO().DeltaTime);
-        app.draw();
+            ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+            app.tick(ImGui::GetIO().DeltaTime);
+            app.draw();
 
-        ImGui::Render();
-        int fb_w, fb_h;
-        glfwGetFramebufferSize(window, &fb_w, &fb_h);
-        glViewport(0, 0, fb_w, fb_h);
-        glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            ImGui::Render();
+            int fb_w, fb_h;
+            glfwGetFramebufferSize(window, &fb_w, &fb_h);
+            glViewport(0, 0, fb_w, fb_h);
+            glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
-        glfwSwapBuffers(window);
-    }
+            glfwSwapBuffers(window);
+        }
+
+    } // Release viewers and join import workers while graphics is still alive.
 
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();

@@ -25,6 +25,8 @@ find_library(SWSCALE_LIB  swscale  REQUIRED)
 # ---------------------------------------------------------------------------
 find_package(MetavisionSDK 5.2.0 REQUIRED COMPONENTS stream)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc videoio)
+find_package(HDF5 REQUIRED COMPONENTS C)
+find_package(Threads REQUIRED)
 
 # OpenEB is installed under /usr/local in the Linux devcontainer.  Use a
 # transitive build rpath so Metavision's indirect shared-library dependencies
@@ -53,6 +55,12 @@ add_library(mustard STATIC
     src/data/events/PropheseeRawStream.cpp
     src/data/events/PropheseeLiveBuffer.cpp
     src/data/events/PropheseeLiveStream.cpp
+    src/data/events/EventImport.cpp
+    src/data/events/CsvEventSource.cpp
+    src/data/events/Hdf5EventSource.cpp
+    src/data/events/TabularEventLoader.cpp
+    src/data/events/TabularEventStream.cpp
+    src/app/EventImportSession.cpp
     src/annotation/BoundingBox.cpp
     src/annotation/EyeTracking.cpp
     src/annotation/AnnotationStore.cpp
@@ -61,7 +69,7 @@ target_include_directories(mustard PUBLIC include)
 # imgui is needed here so that annotation renderers can find imgui.h at compile time.
 # PRIVATE keeps it out of mustard's public interface so pure-data test targets
 # that don't reference annotation types are unaffected.
-target_link_libraries(mustard PRIVATE imgui MetavisionSDK::stream)
+target_link_libraries(mustard PRIVATE imgui MetavisionSDK::stream HDF5::HDF5 Threads::Threads)
 
 # ---------------------------------------------------------------------------
 # mustard_app — viewer executable

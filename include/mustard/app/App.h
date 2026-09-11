@@ -1,11 +1,13 @@
 #pragma once
 #include "mustard/core/TimeController.h"
+#include "mustard/app/EventImportSession.h"
 #include "mustard/ui/DVSViewerPanel.h"
 #include "mustard/ui/ViewerPanel.h"
 
 #include <deque>
 #include <memory>
 #include <string>
+#include <set>
 #include <vector>
 
 namespace mustard {
@@ -18,7 +20,7 @@ namespace mustard {
 class App {
 public:
     App();
-    ~App() = default;
+    ~App();
 
     App(const App&)            = delete;
     App& operator=(const App&) = delete;
@@ -37,44 +39,23 @@ private:
     void openFileOrFolder(const std::string &p);
     void drawFileDialog();
     void drawPlaybackPanel();
+    void drawImportDialog();
+    void commitImport();
     void setEventTheme(DVSViewerPanel::EventTheme theme);
-
-    /// Recursively scan @p path for iitdatalog files and open a panel for each.
-    void openFolder(const std::string& path);
-    /// Open a single data file directly (user selected it in the browser).
-    void openSingleFile(const std::string& filepath);
 
     void addRecentPath(const std::string path);
     void loadRecentPaths();
     void saveRecentPaths();
     static std::string recentPathsFile();
 
-    /// Try to open @p filepath as an iitdatalog event stream and append a panel.
-    /// Updates @p t_min / @p t_max with the stream's time range.
-    bool tryAddIITDatalog(const std::string& filepath, const std::string& label,
-                          int64_t& t_min, int64_t& t_max);
-
-    /// Try to open @p filepath as a video and append a panel.
-    /// Updates @p t_min / @p t_max with the resulting time range.
-    bool tryAddVideo(const std::string& filepath, const std::string& label,
-                     int64_t& t_min, int64_t& t_max);
-
-    /// Try to open @p dir_path as an image-list panel and append it.
-    /// Updates @p t_min / @p t_max with the resulting time range.
-    bool tryAddImageList(const std::string& dir_path, const std::string& label,
-                         int64_t& t_min, int64_t& t_max);
-
-    static bool isIITDatalogCandidate(const std::string& filepath);
-    static bool isMp4Candidate(const std::string& filepath);
-    /// Returns true when @p dir_path is a directory containing more than 50
-    /// PNG/JPG image files (non-recursive scan).
-    static bool isImageListCandidate(const std::string& dir_path);
-
     static constexpr int kMaxRecentPaths = 10;
 
     std::shared_ptr<TimeController>             time_ctrl_;
     std::vector<std::unique_ptr<ViewerPanel>>   viewers_;
     std::deque<std::string>                     recent_paths_;
+    std::unique_ptr<EventImportSession>          import_;
+    std::set<std::string>                       selected_datasets_;
+    std::string                                selection_file_;
 
     bool        wants_quit_{false};
     bool        show_open_file_dialog_{false};

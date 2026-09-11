@@ -3,7 +3,7 @@
 #include "mustard/ui/DVSViewerPanel.h"
 #include "mustard/ui/RGBVideoPanel.h"
 #include "mustard/ui/ImageListPanel.h"
-#include "mustard/data/events/IITDatalogStream.h"
+#include "mustard/data/events/TabularEventStream.h"
 
 #include "ImGuiFileDialog.h"
 #include "imgui.h"
@@ -13,15 +13,28 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <limits>
+#include <map>
+#include <functional>
+#include <sstream>
 #include <string>
 
 namespace mustard {
 
 App::App()
-    : time_ctrl_(std::make_shared<TimeController>())
+    : time_ctrl_(std::make_shared<TimeController>()),
+      import_(std::make_unique<EventImportSession>())
 {
+    // The dispatcher only visits currently owned panels; closing one cannot
+    // leave a dangling callback in the playback controller.
+    time_ctrl_->addObserver([this](int64_t t) {
+        for (auto& viewer : viewers_) viewer->onTimeChanged(t);
+    });
     loadRecentPaths();
+}
+
+App::~App() {
+    viewers_.clear();
+    import_.reset(); // cancel and join before main destroys the GL context
 }
 
 void App::tick(double dt) {
@@ -31,6 +44,11 @@ void App::tick(double dt) {
 void App::draw() {
     drawMenuBar();
     drawFileDialog();
+    if (import_) import_->poll();
+    drawImportDialog();
+    if (import_ && import_->phase() == EventImportSession::Phase::Ready) {
+        commitImport();
+    }
 
     if (!viewers_.empty()) {
         const ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -162,18 +180,12 @@ void App::setEventTheme(DVSViewerPanel::EventTheme theme) {
     }
 }
 
-void App::openFileOrFolder(const std::string &p)
-{
-    viewers_.clear();
-    time_ctrl_ = std::make_shared<TimeController>();
-    addRecentPath(p);
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    if (fs::is_directory(p, ec) && !ec)
-        openFolder(p);
-    else
-        openSingleFile(p);
-} 
+void App::openFileOrFolder(const std::string& path) {
+    import_->begin(path);
+    selected_datasets_.clear();
+    selection_file_.clear();
+    status_message_ = "Preparing import";
+}
 
 // ---------------------------------------------------------------------------
 // Private — file/folder browser dialog
@@ -292,186 +304,6 @@ void App::drawPlaybackPanel() {
 }
 
 // ---------------------------------------------------------------------------
-// Private — folder scanning
-// ---------------------------------------------------------------------------
-
-bool App::isIITDatalogCandidate(const std::string& filepath) {
-    namespace fs = std::filesystem;
-    return fs::path(filepath).extension() == ".log";
-}
-
-bool App::isMp4Candidate(const std::string& filepath) {
-    namespace fs = std::filesystem;
-    const auto ext = fs::path(filepath).extension().string();
-    // Accept common video container extensions FFmpeg can decode
-    return ext == ".mp4" || ext == ".MP4" || ext == ".mkv" || ext == ".avi";
-}
-
-bool App::isImageListCandidate(const std::string& dir_path) {
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    if (!fs::is_directory(dir_path, ec) || ec) return false;
-    constexpr int kMinImages = 50;
-    int count = 0;
-    for (const auto& entry : fs::directory_iterator(dir_path, ec)) {
-        if (ec) { ec.clear(); continue; }
-        if (!entry.is_regular_file(ec)) { ec.clear(); continue; }
-        const auto ext = entry.path().extension().string();
-        if (ext == ".png" || ext == ".PNG" ||
-            ext == ".jpg" || ext == ".JPG" ||
-            ext == ".jpeg" || ext == ".JPEG") {
-            ++count;
-            if (count > kMinImages) return true;
-        }
-    }
-    return false;
-}
-
-bool App::tryAddImageList(const std::string& dir_path, const std::string& label,
-                          int64_t& t_min, int64_t& t_max) {
-    auto panel = std::make_unique<ImageListPanel>(dir_path, label);
-    if (!panel->isLoaded()) return false;
-
-    panel->setAnnotationStore(std::make_shared<AnnotationStore>());
-    t_min = std::min(t_min, panel->streamStartUs());
-    t_max = std::max(t_max, panel->streamEndUs());
-
-    ImageListPanel* raw = panel.get();
-    time_ctrl_->addObserver([raw](int64_t t) { raw->onTimeChanged(t); });
-    viewers_.push_back(std::move(panel));
-    return true;
-}
-
-// ---------------------------------------------------------------------------
-// Private — format-specific panel builders
-// ---------------------------------------------------------------------------
-
-bool App::tryAddIITDatalog(const std::string& filepath, const std::string& label,
-                           int64_t& t_min, int64_t& t_max) {
-    auto stream = std::make_shared<IITDatalogStream>();
-    if (!stream->open(filepath)) return false;
-    if (stream->sensorWidth()  <= 0 ||
-        stream->sensorHeight() <= 0 ||
-        stream->startTime()    >= stream->endTime()) return false;
-
-    t_min = std::min(t_min, stream->startTime());
-    t_max = std::max(t_max, stream->endTime());
-
-    auto panel = std::make_unique<DVSViewerPanel>(stream, label);
-    panel->setEventTheme(event_theme_);
-    panel->setAnnotationStore(std::make_shared<AnnotationStore>());
-    // Raw pointer is valid as long as viewers_ is alive, which outlives time_ctrl_.
-    DVSViewerPanel* raw = panel.get();
-    raw->setStartOffset(stream->startTime());
-    time_ctrl_->addObserver([raw](int64_t t) { raw->onTimeChanged(t); });
-    viewers_.push_back(std::move(panel));
-    return true;
-}
-
-bool App::tryAddVideo(const std::string& filepath, const std::string& label,
-                      int64_t& t_min, int64_t& t_max) {
-    auto panel = std::make_unique<RGBVideoPanel>(filepath, label);
-    if (!panel->isLoaded()) return false;
-
-    panel->setAnnotationStore(std::make_shared<AnnotationStore>());
-    t_min = std::min(t_min, panel->streamStartUs());
-    t_max = std::max(t_max, panel->streamEndUs());
-
-    RGBVideoPanel* raw = panel.get();
-    time_ctrl_->addObserver([raw](int64_t t) { raw->onTimeChanged(t); });
-    viewers_.push_back(std::move(panel));
-    return true;
-}
-
-// ---------------------------------------------------------------------------
-// Private — open a single data file directly
-// ---------------------------------------------------------------------------
-
-void App::openSingleFile(const std::string& filepath) {
-    namespace fs = std::filesystem;
-
-    status_message_.clear();
-
-    const std::string label = fs::path(filepath).filename().string() + "##v1";
-    int64_t t_start = std::numeric_limits<int64_t>::max();
-    int64_t t_end   = std::numeric_limits<int64_t>::min();
-    bool ok = false;
-
-    if (isMp4Candidate(filepath))
-        ok = tryAddVideo(filepath, label, t_start, t_end);
-    else if (isIITDatalogCandidate(filepath))
-        ok = tryAddIITDatalog(filepath, label, t_start, t_end);
-    else if (isImageListCandidate(filepath))
-        ok = tryAddImageList(filepath, label, t_start, t_end);
-
-    if (!ok) {
-        status_message_ = "Failed to open or unsupported format: " + filepath;
-        return;
-    }
-
-    time_ctrl_->setRange(t_start, t_end);
-    time_ctrl_->seekTo(t_start);
-    status_message_ = "Opened: " + fs::path(filepath).filename().string();
-    layout_pending_ = true;
-}
-
-// ---------------------------------------------------------------------------
-// Private — folder scanning
-// ---------------------------------------------------------------------------
-
-void App::openFolder(const std::string& path) {
-    namespace fs = std::filesystem;
-
-    status_message_.clear();
-
-    std::error_code ec;
-    if (!fs::exists(path, ec) || !fs::is_directory(path, ec)) {
-        status_message_ = "Not a valid directory: " + path;
-        return;
-    }
-
-    int64_t t_min = std::numeric_limits<int64_t>::max();
-    int64_t t_max = std::numeric_limits<int64_t>::min();
-
-    // Check if the folder itself is an image-list (>50 images).
-    if (isImageListCandidate(path)) {
-        const std::string label = fs::path(path).filename().string() + "##v1";
-        tryAddImageList(path, label, t_min, t_max);
-    }
-
-    // Single directory traversal — bucket candidates by format.
-    std::vector<std::string> eventFiles, videoFiles;
-    for (const auto& entry :
-         fs::recursive_directory_iterator(path,
-             fs::directory_options::skip_permission_denied, ec))
-    {
-        if (ec) { ec.clear(); continue; }
-        if (!entry.is_regular_file(ec)) continue;
-        const std::string fp = entry.path().string();
-        openSingleFile(fp); // Try to open as a file first (handles mixed content folders)
-        
-    }
-
-    if (viewers_.empty()) {
-        status_message_ = "No supported streams found in: " + path;
-        return;
-    }
-
-    // Synchronisation: shift every panel so its data starts at global_start.
-    // For DVS panels stream_t = global_t - offset + stream->startTime();
-    // setting offset = global_start makes stream_t = stream->startTime() when
-    // global_t = global_start, aligning all streams at the earliest timestamp.
-    // For video panels (0-based) video_t = global_t - offset; offset = global_start
-    // makes frame 0 appear at global_start.
-    for (auto& v : viewers_) {
-        v->setStartOffset(time_ctrl_->startTime());
-    }
-
-    status_message_ = std::to_string(viewers_.size()) + " stream(s) opened";
-    layout_pending_ = true;
-}
-
-// ---------------------------------------------------------------------------
 // Private — recent paths helpers
 // ---------------------------------------------------------------------------
 
@@ -511,6 +343,215 @@ void App::addRecentPath(const std::string path) {
     if (static_cast<int>(recent_paths_.size()) > kMaxRecentPaths)
         recent_paths_.resize(static_cast<std::size_t>(kMaxRecentPaths));
     saveRecentPaths();
+}
+
+void App::commitImport() {
+    if (!import_) return;
+    auto staged = import_->takeStaged();
+    if (staged.empty()) return;
+
+    viewers_.clear();
+
+    ImportTimeRange time_range;
+    for (auto& item : staged) {
+        std::shared_ptr<DVSEventStream> stream = item.stream;
+        if (!stream && item.loader) {
+            auto tab_stream = std::make_shared<TabularEventStream>();
+            tab_stream->adopt(std::move(item.loader), item.source.path);
+            stream = std::move(tab_stream);
+            item.stream = stream;
+        }
+        if (stream) {
+            time_range.include(stream->startTime(), stream->endTime());
+        }
+    }
+
+    if (!time_range.empty) {
+        time_ctrl_->setRange(time_range.start, time_range.end);
+        time_ctrl_->seekTo(time_range.start);
+    }
+
+    for (auto& item : staged) {
+        std::string label = item.source.label;
+        if (!item.dataset.empty()) {
+            label += " :: " + item.dataset;
+        }
+
+        if (item.stream) {
+            auto panel = std::make_unique<DVSViewerPanel>(item.stream, label);
+            panel->setEventTheme(event_theme_);
+            viewers_.push_back(std::move(panel));
+        } else if (item.source.kind == ImportSourceKind::Video) {
+            auto panel = std::make_unique<RGBVideoPanel>(item.source.path, label);
+            if (panel->isLoaded()) {
+                viewers_.push_back(std::move(panel));
+            }
+        } else if (item.source.kind == ImportSourceKind::Images) {
+            auto panel = std::make_unique<ImageListPanel>(item.source.path, label);
+            if (panel->isLoaded()) {
+                viewers_.push_back(std::move(panel));
+            }
+        }
+    }
+
+    addRecentPath(import_->rootPath());
+    layout_pending_ = true;
+    status_message_ = "Imported " + std::to_string(viewers_.size()) + " stream(s)";
+}
+
+void App::drawImportDialog() {
+    if (!import_ || !import_->active()) return;
+
+    if (import_->busy()) {
+        ImGui::OpenPopup("Import Progress");
+        if (ImGui::BeginPopupModal("Import Progress", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("%s...", import_->progressLabel().c_str());
+            ImGui::ProgressBar(import_->progress(), ImVec2(300.0f, 0.0f));
+            if (ImGui::Button("Cancel")) {
+                import_->cancel();
+            }
+            ImGui::EndPopup();
+        }
+        return;
+    }
+
+    if (import_->phase() == EventImportSession::Phase::Browsing) {
+        ImGui::OpenPopup("Select Datasets (HDF5)");
+        if (ImGui::BeginPopupModal("Select Datasets (HDF5)", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("File: %s", import_->rootPath().c_str());
+            ImGui::Separator();
+
+            const auto& entries = import_->entries();
+            if (ImGui::BeginChild("Hdf5Tree", ImVec2(500.0f, 300.0f), true)) {
+                for (const auto& entry : entries) {
+                    bool is_selected = selected_datasets_.count(entry.path) > 0;
+                    if (!entry.selectable) {
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                        ImGui::Text("%s (%s) - %s", entry.path.c_str(), entry.datatype.c_str(), entry.reason.c_str());
+                        ImGui::PopStyleColor();
+                    } else {
+                        if (ImGui::Checkbox(entry.path.c_str(), &is_selected)) {
+                            if (is_selected) selected_datasets_.insert(entry.path);
+                            else selected_datasets_.erase(entry.path);
+                        }
+                        ImGui::SameLine();
+                        ImGui::TextDisabled("(%s)", entry.datatype.c_str());
+                    }
+                }
+                ImGui::EndChild();
+            }
+
+            ImGui::Separator();
+            if (ImGui::Button("Cancel")) import_->cancel();
+            ImGui::SameLine();
+            if (ImGui::Button("Skip File")) import_->skipFile();
+            ImGui::SameLine();
+            if (ImGui::Button("Next", ImVec2(80.0f, 0.0f))) {
+                if (!selected_datasets_.empty()) {
+                    import_->selectDatasets(std::vector<std::string>(selected_datasets_.begin(), selected_datasets_.end()));
+                }
+            }
+            ImGui::EndPopup();
+        }
+        return;
+    }
+
+    if (import_->phase() == EventImportSession::Phase::Configuring) {
+        auto* config = import_->configuration();
+        if (!config) return;
+
+        ImGui::OpenPopup("Configure Event Mapping");
+        if (ImGui::BeginPopupModal("Configure Event Mapping", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            const auto* file = import_->currentFile();
+            ImGui::Text("File: %s", file ? file->label.c_str() : "");
+            if (!config->options.dataset.empty()) {
+                ImGui::Text("Dataset: %s", config->options.dataset.c_str());
+            }
+            ImGui::Separator();
+
+            if (config->preview_ready) {
+                const auto& preview = config->preview;
+                const auto& cols = preview.columns;
+
+                const char* fields[] = {"x column", "y column", "timestamp column", "polarity column"};
+                for (int f = 0; f < 4; ++f) {
+                    std::string current_name = "None";
+                    int sel = config->options.columns[f];
+                    if (sel >= 0 && static_cast<size_t>(sel) < cols.size()) {
+                        current_name = cols[sel];
+                    }
+                    if (ImGui::BeginCombo(fields[f], current_name.c_str())) {
+                        for (int c = 0; c < static_cast<int>(cols.size()); ++c) {
+                            bool selected = (sel == c);
+                            if (ImGui::Selectable(cols[c].c_str(), selected)) {
+                                config->options.columns[f] = c;
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
+                }
+
+                ImGui::Separator();
+                int unit_idx = static_cast<int>(config->options.timestamp_unit);
+                const char* units[] = {"Microseconds (us)", "Seconds (s)", "Milliseconds (ms)", "Nanoseconds (ns)"};
+                if (ImGui::Combo("Timestamp Unit", &unit_idx, units, 4)) {
+                    config->options.timestamp_unit = static_cast<TimestampUnit>(unit_idx);
+                }
+
+                ImGui::InputInt("Sensor Width (0=infer)", &config->options.sensor_width);
+                ImGui::InputInt("Sensor Height (0=infer)", &config->options.sensor_height);
+
+                ImGui::Separator();
+                ImGui::Text("Preview (first %d rows):", static_cast<int>(preview.rows.size()));
+                if (ImGui::BeginChild("PreviewTable", ImVec2(500.0f, 150.0f), true)) {
+                    if (ImGui::BeginTable("table_preview", static_cast<int>(cols.size()), ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+                        for (const auto& col : cols) {
+                            ImGui::TableSetupColumn(col.c_str());
+                        }
+                        ImGui::TableHeadersRow();
+
+                        for (const auto& row : preview.rows) {
+                            ImGui::TableNextRow();
+                            for (int c = 0; c < static_cast<int>(row.size()); ++c) {
+                                ImGui::TableSetColumnIndex(c);
+                                ImGui::Text("%s", tableCellText(row[c]).c_str());
+                            }
+                        }
+                        ImGui::EndTable();
+                    }
+                    ImGui::EndChild();
+                }
+            }
+
+            ImGui::Separator();
+            if (import_->canGoBack() && ImGui::Button("Back")) import_->back();
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) import_->cancel();
+            ImGui::SameLine();
+            if (ImGui::Button("Skip File")) import_->skipFile();
+            ImGui::SameLine();
+            if (ImGui::Button("Import", ImVec2(80.0f, 0.0f))) {
+                import_->importFile();
+            }
+            ImGui::EndPopup();
+        }
+        return;
+    }
+
+    if (import_->phase() == EventImportSession::Phase::FileError) {
+        ImGui::OpenPopup("Import Error");
+        if (ImGui::BeginPopupModal("Import Error", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextWrapped("Error: %s", import_->error().describe().c_str());
+            ImGui::Separator();
+            if (ImGui::Button("Retry")) import_->retry();
+            ImGui::SameLine();
+            if (ImGui::Button("Skip File")) import_->skipFile();
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel")) import_->cancel();
+            ImGui::EndPopup();
+        }
+        return;
+    }
 }
 
 } // namespace mustard
