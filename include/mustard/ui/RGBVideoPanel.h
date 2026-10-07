@@ -39,6 +39,7 @@ public:
 
     bool    isLoaded()    const noexcept { return loaded_; }
     int64_t durationUs()  const noexcept { return duration_us_; }
+    int64_t frameDurationUs() const noexcept { return frame_duration_us_; }
     int imageWidth() const noexcept { return tex_w_; }
     int imageHeight() const noexcept { return tex_h_; }
 
@@ -69,6 +70,7 @@ private:
     std::vector<uint8_t> pixels_; ///< RGBA row-major pixel buffer
 
     int64_t duration_us_{0};
+    int64_t frame_duration_us_{33'333};
     int64_t last_time_us_{-1};
     bool    loaded_{false};
     std::string filepath_;

@@ -8,6 +8,11 @@ The application can open individual files or scan folders for supported streams.
 Loaded streams are shown as synchronized viewer panes with a shared playback
 timeline, seek control, and recent-file menu.
 
+Playback can be toggled with `Space`. Use the left and right arrow keys to
+step by one frame; when an event stream is loaded, stepping uses that stream's
+current accumulation-window duration. The playback bar also provides a speed
+slider from 0.1x to 4x.
+
 ## Supported data
 
 - IIT datalog event streams (`.log`)

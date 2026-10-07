@@ -1,6 +1,7 @@
 #include "mustard/core/TimeController.h"
 
 #include <algorithm>
+#include <limits>
 
 namespace mustard {
 
@@ -13,6 +14,19 @@ void TimeController::setRange(int64_t start, int64_t end) {
 void TimeController::seekTo(int64_t t) {
     current_time_ = std::clamp(t, start_time_, end_time_);
     notifyObservers();
+}
+
+void TimeController::seekBy(int64_t delta_us) {
+    // Avoid signed overflow before seekTo() gets a chance to clamp.
+    if (delta_us > 0 &&
+        current_time_ > std::numeric_limits<int64_t>::max() - delta_us) {
+        seekTo(end_time_);
+    } else if (delta_us < 0 &&
+               current_time_ < std::numeric_limits<int64_t>::min() - delta_us) {
+        seekTo(start_time_);
+    } else {
+        seekTo(current_time_ + delta_us);
+    }
 }
 
 void TimeController::setPlaying(bool playing) {

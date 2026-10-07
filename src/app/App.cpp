@@ -273,8 +273,19 @@ void App::drawPlaybackPanel() {
 
     ImGui::SameLine();
 
+    // Playback rate (logarithmic so slow speeds get useful slider space).
+    float speed = static_cast<float>(time_ctrl_->playbackSpeed());
+    ImGui::SetNextItemWidth(90.f);
+    if (ImGui::SliderFloat("##speed", &speed, 0.1f, 4.f, "%.2fx",
+                           ImGuiSliderFlags_Logarithmic)) {
+        time_ctrl_->setPlaybackSpeed(speed);
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Playback speed");
+
+    ImGui::SameLine();
+
     // Seek slider (0.0 – 1.0 relative position)
-    ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - 160.f);
+    ImGui::PushItemWidth(std::max(1.f, ImGui::GetContentRegionAvail().x - 160.f));
     float t_rel = (t_range > 0)
         ? static_cast<float>(time_ctrl_->currentTime() - t_start) /
           static_cast<float>(t_range)
@@ -301,7 +312,48 @@ void App::drawPlaybackPanel() {
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("Quit");
 
+    handlePlaybackShortcuts();
+
     ImGui::End();
+}
+
+int64_t App::playbackStepUs() const noexcept {
+    // An event representation is a frame accumulated over its temporal
+    // window, so it defines stepping whenever one is present.
+    for (const auto& viewer : viewers_) {
+        if (const auto* dvs = dynamic_cast<const DVSViewerPanel*>(viewer.get()))
+            return std::max<int64_t>(1, dvs->accumWindow());
+    }
+
+    for (const auto& viewer : viewers_) {
+        if (dynamic_cast<const ImageListPanel*>(viewer.get()))
+            return ImageListPanel::kFrameDurationUs;
+        if (const auto* video = dynamic_cast<const RGBVideoPanel*>(viewer.get()))
+            return std::max<int64_t>(1, video->frameDurationUs());
+    }
+    return 33'333;
+}
+
+void App::handlePlaybackShortcuts() {
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.WantTextInput || ImGui::IsAnyItemActive() ||
+        io.KeyCtrl || io.KeyAlt || io.KeyShift || io.KeySuper) {
+        return;
+    }
+
+    if (ImGui::IsKeyPressed(ImGuiKey_Space, /*repeat=*/false)) {
+        time_ctrl_->setPlaying(!time_ctrl_->isPlaying());
+    }
+
+    const int64_t step = playbackStepUs();
+    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, /*repeat=*/true)) {
+        time_ctrl_->setPlaying(false);
+        time_ctrl_->seekBy(step);
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, /*repeat=*/true)) {
+        time_ctrl_->setPlaying(false);
+        time_ctrl_->seekBy(-step);
+    }
 }
 
 // ---------------------------------------------------------------------------

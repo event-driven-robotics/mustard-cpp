@@ -51,7 +51,8 @@ int main() {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    // Keep ImGui's basic Tab focus traversal, but don't enable its extended
+    // arrow-key navigation: Left/Right are reserved for timeline stepping.
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
     ImGui::StyleColorsDark();

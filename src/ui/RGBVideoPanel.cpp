@@ -146,6 +146,12 @@ bool RGBVideoPanel::openVideo(const std::string& filepath) {
     AVStream* vs   = ff_->fmt_ctx->streams[ff_->video_stream_idx];
     ff_->time_base = vs->time_base;
 
+    const AVRational frame_rate = av_guess_frame_rate(ff_->fmt_ctx, vs, nullptr);
+    if (frame_rate.num > 0 && frame_rate.den > 0) {
+        frame_duration_us_ = std::max<int64_t>(
+            1, av_rescale_q(1, av_inv_q(frame_rate), AVRational{1, 1'000'000}));
+    }
+
     // Duration in microseconds
     if (vs->duration != AV_NOPTS_VALUE) {
         duration_us_ = av_rescale_q(vs->duration, ff_->time_base,

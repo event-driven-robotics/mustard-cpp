@@ -28,6 +28,8 @@ public:
     // ------------------------------------------------------------------
     void setRange(int64_t start, int64_t end);
     void seekTo(int64_t t);
+    /// Move relative to the current playhead, clamped to the active range.
+    void seekBy(int64_t delta_us);
     void setPlaying(bool playing);
     void setPlaybackSpeed(double speed);
     void setLiveMode(bool live);

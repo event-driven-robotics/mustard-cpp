@@ -50,3 +50,15 @@ TEST(TimeControllerLiveModeTest, NonLiveStillStopsAtEnd) {
     EXPECT_EQ(tc.currentTime(), 100'000);
     EXPECT_FALSE(tc.isPlaying());
 }
+
+TEST(TimeControllerSeekTest, RelativeSeekClampsAtBothEnds) {
+    TimeController tc;
+    tc.setRange(100, 200);
+    tc.seekTo(150);
+
+    tc.seekBy(1'000);
+    EXPECT_EQ(tc.currentTime(), 200);
+
+    tc.seekBy(-1'000);
+    EXPECT_EQ(tc.currentTime(), 100);
+}

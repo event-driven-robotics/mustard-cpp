@@ -39,6 +39,8 @@ private:
     void openFileOrFolder(const std::string &p);
     void drawFileDialog();
     void drawPlaybackPanel();
+    void handlePlaybackShortcuts();
+    int64_t playbackStepUs() const noexcept;
     void drawImportDialog();
     void commitImport();
     void setEventTheme(DVSViewerPanel::EventTheme theme);
