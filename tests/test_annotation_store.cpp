@@ -7,6 +7,8 @@
 // at link time (via the imgui CMake target) but never executed.
 
 #include "mustard/annotation/AnnotationStore.h"
+#include "mustard/annotation/AnnotationInterpolation.h"
+#include "mustard/annotation/InterpolationEndpoint.h"
 #include "mustard/annotation/BoundingBox.h"
 #include "mustard/annotation/EyeTracking.h"
 #include "mustard/annotation/PointAnnotation.h"
@@ -293,4 +295,85 @@ TEST(AnnotationStoreTest, RemovePointsAtPreservesOtherTypes) {
     ASSERT_NE(annotations, nullptr);
     ASSERT_EQ(annotations->size(), 1u);
     EXPECT_NE(dynamic_cast<const BoundingBox*>((*annotations)[0].get()), nullptr);
+}
+
+TEST(AnnotationInterpolationTest, InterpolatesAllNumericFields) {
+    AnnotationStore store;
+    store.add(std::make_unique<PointAnnotation>(0, 0.f, 10.f));
+    store.add(std::make_unique<PointAnnotation>(1000, 20.f, 30.f));
+    store.add(std::make_unique<EyeTracking>(0, 0.f, 2.f, 10.f, 20.f, 30.f));
+    store.add(std::make_unique<EyeTracking>(1000, 4.f, 6.f, 30.f, 40.f, 50.f));
+    store.add(std::make_unique<BoundingBox>(0, 0.f, 10.f, 20.f, 30.f, "car"));
+    store.add(std::make_unique<BoundingBox>(1000, 40.f, 50.f, 60.f, 70.f, "car"));
+
+    const auto interpolated = interpolateAnnotationsAt(store, 250);
+    ASSERT_EQ(interpolated.size(), 3u);
+    const auto* point = dynamic_cast<const PointAnnotation*>(interpolated[0].get());
+    const auto* eye = dynamic_cast<const EyeTracking*>(interpolated[1].get());
+    const auto* box = dynamic_cast<const BoundingBox*>(interpolated[2].get());
+    ASSERT_NE(point, nullptr);
+    ASSERT_NE(eye, nullptr);
+    ASSERT_NE(box, nullptr);
+    EXPECT_FLOAT_EQ(point->x(), 5.f);
+    EXPECT_FLOAT_EQ(point->y(), 15.f);
+    EXPECT_FLOAT_EQ(eye->phi(), 1.f);
+    EXPECT_FLOAT_EQ(eye->theta(), 3.f);
+    EXPECT_FLOAT_EQ(eye->centerX(), 15.f);
+    EXPECT_FLOAT_EQ(eye->centerY(), 25.f);
+    EXPECT_FLOAT_EQ(eye->radius(), 35.f);
+    EXPECT_FLOAT_EQ(box->x(), 10.f);
+    EXPECT_FLOAT_EQ(box->y(), 20.f);
+    EXPECT_FLOAT_EQ(box->w(), 30.f);
+    EXPECT_FLOAT_EQ(box->h(), 40.f);
+    EXPECT_EQ(box->label(), "car");
+}
+
+TEST(AnnotationInterpolationTest, DoesNotExtrapolateOrReplaceExactKeyframes) {
+    AnnotationStore store;
+    store.add(std::make_unique<PointAnnotation>(100, 1.f, 2.f));
+    store.add(std::make_unique<PointAnnotation>(200, 3.f, 4.f));
+    EXPECT_TRUE(interpolateAnnotationsAt(store, 99).empty());
+    EXPECT_TRUE(interpolateAnnotationsAt(store, 100).empty());
+    EXPECT_TRUE(interpolateAnnotationsAt(store, 200).empty());
+    EXPECT_TRUE(interpolateAnnotationsAt(store, 201).empty());
+    ASSERT_NE(store.queryExact(100), nullptr);
+    EXPECT_EQ(store.queryExact(150), nullptr);
+}
+
+TEST(AnnotationInterpolationTest, RequiresUniqueNonEmptyBoundingBoxLabels) {
+    AnnotationStore store;
+    store.add(std::make_unique<BoundingBox>(0, 0, 0, 1, 1, "car"));
+    store.add(std::make_unique<BoundingBox>(0, 5, 5, 1, 1, "car"));
+    store.add(std::make_unique<BoundingBox>(100, 10, 10, 1, 1, "car"));
+    store.add(std::make_unique<BoundingBox>(0, 0, 0, 1, 1, ""));
+    store.add(std::make_unique<BoundingBox>(100, 10, 10, 1, 1, ""));
+    EXPECT_TRUE(interpolateAnnotationsAt(store, 50).empty());
+}
+
+TEST(AnnotationInterpolationTest, EndpointBlocksOnlyItsAnnotationType) {
+    AnnotationStore store;
+    store.add(std::make_unique<PointAnnotation>(0, 0.f, 0.f));
+    store.add(std::make_unique<PointAnnotation>(1000, 10.f, 10.f));
+    store.add(std::make_unique<EyeTracking>(0, 0.f, 0.f, 0.f, 0.f, 10.f));
+    store.add(std::make_unique<EyeTracking>(1000, 1.f, 1.f, 10.f, 10.f, 20.f));
+    store.setInterpolationEndpoint(500, AnnotationKind::kPoint);
+
+    const auto interpolated = interpolateAnnotationsAt(store, 750);
+    ASSERT_EQ(interpolated.size(), 1u);
+    EXPECT_NE(dynamic_cast<const EyeTracking*>(interpolated[0].get()), nullptr);
+    const auto* at_endpoint = store.queryExact(500);
+    ASSERT_NE(at_endpoint, nullptr);
+    ASSERT_EQ(at_endpoint->size(), 1u);
+    EXPECT_NE(dynamic_cast<const InterpolationEndpoint*>((*at_endpoint)[0].get()),
+              nullptr);
+}
+
+TEST(AnnotationInterpolationTest, AuthoredValueReplacesEndpointAtSameTime) {
+    AnnotationStore store;
+    store.setInterpolationEndpoint(500, AnnotationKind::kPoint);
+    store.add(std::make_unique<PointAnnotation>(500, 2.f, 3.f));
+    const auto* annotations = store.queryExact(500);
+    ASSERT_NE(annotations, nullptr);
+    ASSERT_EQ(annotations->size(), 1u);
+    EXPECT_NE(dynamic_cast<const PointAnnotation*>((*annotations)[0].get()), nullptr);
 }

@@ -3,6 +3,7 @@
 #include "mustard/annotation/Annotation.h"
 #include "mustard/annotation/EyeTracking.h"
 #include "mustard/annotation/PointAnnotation.h"
+#include "mustard/annotation/InterpolationEndpoint.h"
 
 #include <memory>
 #include <sstream>
@@ -129,6 +130,9 @@ std::unique_ptr<Annotation> Annotation::deserialize(const std::string& s) {
     }
     if (s.rfind("Point", 0) == 0) {
         return PointAnnotation::deserialize(s);
+    }
+    if (s.rfind("InterpolationEndpoint", 0) == 0) {
+        return InterpolationEndpoint::deserialize(s);
     }
     return nullptr;
 }

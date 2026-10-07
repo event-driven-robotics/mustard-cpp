@@ -40,7 +40,7 @@ void RGBLivePanel::draw() {
     }
 
     setAnnotationImageSize(tex_w_, tex_h_);
-    drawAnnotationControls();
+    drawAnnotationControls(annotationTimeUs(last_time_us_));
 
     if (copyLatestFrame()) {
         uploadTexture();

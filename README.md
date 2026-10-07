@@ -51,6 +51,16 @@ Mustard also supports annotation overlays:
   radius
 - Per-panel annotation export through the `Save Annotations` control
 
+Enable `Interpolate` to preview linear values between point and eye-tracking
+keyframes, or between uniquely labeled bounding boxes. Interpolation never
+extends before the first or after the last compatible keyframe. The annotation
+save dialog can also include interpolated CSV rows at a configurable FPS;
+display and save interpolation are independent settings.
+
+While annotating, use `No Annotation Here` to place an empty keyframe for the
+selected annotation type. Empty keyframes stop interpolation across gaps and
+are saved as CSV rows whose value fields are blank.
+
 For eye tracking annotations, drag to set gaze orientation, hold `Shift` while
 dragging to resize the radius, and hold `Ctrl` while dragging to move the eye
 center.

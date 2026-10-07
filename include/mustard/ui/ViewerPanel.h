@@ -92,6 +92,7 @@ protected:
     float       export_progress_{0.f};
     bool        exporting_{false};
     bool           annotating_{false};
+    bool           interpolation_enabled_{false};
     AnnotationType annotation_type_{AnnotationType::kBoundingBox};
 
     // Drag state for annotation drawing
@@ -125,7 +126,7 @@ protected:
 
     /// Render the annotation toolbar row (Annotate / Stop / Save).
     /// Call once per frame from within an ImGui::Begin…End block.
-    void drawAnnotationControls();
+    void drawAnnotationControls(int64_t annotation_time_us);
 
     /// Produce the panel's native RGBA rendering at a stream-local timestamp.
     /// The shared exporter encodes these frames into an MP4.
@@ -156,6 +157,8 @@ private:
     std::unique_ptr<ExportJob> export_job_;
     std::string annotation_file_stem_{"annotations"};
     std::string pending_save_directory_;
+    bool save_interpolated_values_{false};
+    int interpolation_save_fps_{30};
 };
 
 } // namespace mustard

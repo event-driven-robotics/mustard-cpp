@@ -94,7 +94,7 @@ void RGBVideoPanel::draw() {
     }
 
     setAnnotationImageSize(tex_w_, tex_h_);
-    drawAnnotationControls();
+    drawAnnotationControls(annotationTimeUs(last_time_us_));
 
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     if (tex_id_ != 0 && tex_w_ > 0 && tex_h_ > 0 &&

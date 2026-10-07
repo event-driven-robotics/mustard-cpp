@@ -3,6 +3,7 @@
 #include "mustard/annotation/BoundingBox.h"
 #include "mustard/annotation/EyeTracking.h"
 #include "mustard/annotation/PointAnnotation.h"
+#include "mustard/annotation/InterpolationEndpoint.h"
 
 #include <gtest/gtest.h>
 
@@ -31,6 +32,12 @@ int TempDir::counter = 0;
 
 void write(const std::filesystem::path& path, const std::string& text) {
     std::ofstream(path) << text;
+}
+
+std::string read(const std::filesystem::path& path) {
+    std::ifstream input(path);
+    return std::string(std::istreambuf_iterator<char>(input),
+                       std::istreambuf_iterator<char>());
 }
 
 } // namespace
@@ -118,6 +125,73 @@ TEST(AnnotationCsvTest, SavesOneCsvPerNonEmptyTypeAndRoundTripsLabels) {
     const auto* box = dynamic_cast<const BoundingBox*>((*annotations)[0].get());
     ASSERT_NE(box, nullptr);
     EXPECT_EQ(box->label(), "a, \"label\"");
+}
+
+TEST(AnnotationCsvTest, SavesInterpolatedRowsAtRequestedFpsWithoutDuplicates) {
+    TempDir dir;
+    AnnotationStore store;
+    store.add(std::make_unique<PointAnnotation>(0, 0.f, 0.f));
+    store.add(std::make_unique<PointAnnotation>(500'000, 5.f, 10.f));
+    store.add(std::make_unique<PointAnnotation>(1'000'000, 10.f, 20.f));
+    std::vector<std::string> written;
+    std::string error;
+    AnnotationCsvSaveSettings settings;
+    settings.include_interpolated = true;
+    settings.interpolation_fps = 4;
+    ASSERT_TRUE(saveAnnotationCsvFiles(dir.path.string(), "clip", store, false,
+                                       written, error, settings)) << error;
+    EXPECT_EQ(read(dir.path / "clip_points.csv"),
+              "timestamp,x,y\n"
+              "0,0,0\n"
+              "250000,2.5,5\n"
+              "500000,5,10\n"
+              "750000,7.5,15\n"
+              "1000000,10,20\n");
+
+    AnnotationStore restored;
+    ASSERT_TRUE(loadAnnotationCsv((dir.path / "clip_points.csv").string(),
+                                  restored, 100, 100, error)) << error;
+    EXPECT_EQ(restored.totalCount(), 5u);
+}
+
+TEST(AnnotationCsvTest, KeyframeOnlySaveRemainsUnchanged) {
+    TempDir dir;
+    AnnotationStore store;
+    store.add(std::make_unique<PointAnnotation>(0, 1.f, 2.f));
+    store.add(std::make_unique<PointAnnotation>(1'000'000, 3.f, 4.f));
+    std::vector<std::string> written;
+    std::string error;
+    ASSERT_TRUE(saveAnnotationCsvFiles(dir.path.string(), "clip", store, false,
+                                       written, error)) << error;
+    EXPECT_EQ(read(dir.path / "clip_points.csv"),
+              "timestamp,x,y\n0,1,2\n1000000,3,4\n");
+}
+
+TEST(AnnotationCsvTest, InterpolationEndpointsRoundTripAsEmptyRows) {
+    TempDir dir;
+    AnnotationStore store;
+    store.setInterpolationEndpoint(100, AnnotationKind::kPoint);
+    store.setInterpolationEndpoint(200, AnnotationKind::kEyeTracking);
+    store.setInterpolationEndpoint(300, AnnotationKind::kBoundingBox);
+    std::vector<std::string> written;
+    std::string error;
+    ASSERT_TRUE(saveAnnotationCsvFiles(dir.path.string(), "clip", store, false,
+                                       written, error)) << error;
+    EXPECT_EQ(read(dir.path / "clip_points.csv"),
+              "timestamp,x,y\n100,,\n");
+    EXPECT_EQ(read(dir.path / "clip_eye_tracking.csv"),
+              "timestamp,phi,theta,center_x,center_y,radius\n200,,,,,\n");
+    EXPECT_EQ(read(dir.path / "clip_bounding_boxes.csv"),
+              "timestamp,x,y,w,h,label\n300,,,,,\n");
+
+    AnnotationStore restored;
+    ASSERT_TRUE(loadAnnotationCsv((dir.path / "clip_points.csv").string(),
+                                  restored, 10, 10, error)) << error;
+    ASSERT_TRUE(loadAnnotationCsv((dir.path / "clip_eye_tracking.csv").string(),
+                                  restored, 10, 10, error)) << error;
+    ASSERT_TRUE(loadAnnotationCsv((dir.path / "clip_bounding_boxes.csv").string(),
+                                  restored, 10, 10, error)) << error;
+    EXPECT_EQ(restored.totalCount(), 3u);
 }
 
 TEST(AnnotationCsvTest, DiscoveryUsesTypedStemAndReportsAmbiguity) {

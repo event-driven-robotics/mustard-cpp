@@ -2,6 +2,9 @@
 #include "mustard/annotation/AnnotationStore.h"
 #include "mustard/annotation/Annotation.h"
 #include "mustard/annotation/PointAnnotation.h"
+#include "mustard/annotation/BoundingBox.h"
+#include "mustard/annotation/EyeTracking.h"
+#include "mustard/annotation/InterpolationEndpoint.h"
 
 #include <algorithm>
 
@@ -17,6 +20,19 @@ namespace mustard {
 void AnnotationStore::add(std::unique_ptr<Annotation> ann) {
     if (!ann) return;
     const int64_t t = ann->timestamp();
+    bool has_kind = true;
+    AnnotationKind kind{};
+    if (dynamic_cast<const PointAnnotation*>(ann.get())) kind = AnnotationKind::kPoint;
+    else if (dynamic_cast<const EyeTracking*>(ann.get())) kind = AnnotationKind::kEyeTracking;
+    else if (dynamic_cast<const BoundingBox*>(ann.get())) kind = AnnotationKind::kBoundingBox;
+    else has_kind = false;
+    if (has_kind) {
+        auto& bucket = annotations_[t];
+        bucket.erase(std::remove_if(bucket.begin(), bucket.end(), [kind](const auto& item) {
+            const auto* endpoint = dynamic_cast<const InterpolationEndpoint*>(item.get());
+            return endpoint && endpoint->kind() == kind;
+        }), bucket.end());
+    }
     annotations_[t].push_back(std::move(ann));
 }
 
@@ -69,6 +85,12 @@ AnnotationStore::queryAt(int64_t t) const {
     return &best->second;
 }
 
+const std::vector<std::unique_ptr<Annotation>>*
+AnnotationStore::queryExact(int64_t t) const {
+    const auto it = annotations_.find(t);
+    return it == annotations_.end() ? nullptr : &it->second;
+}
+
 std::vector<const Annotation*>
 AnnotationStore::queryRange(int64_t t0, int64_t t1) const {
     std::vector<const Annotation*> result;
@@ -109,6 +131,25 @@ void AnnotationStore::removePointsAt(int64_t t) {
         return dynamic_cast<const PointAnnotation*>(ann.get()) != nullptr;
     }), vec.end());
     if (vec.empty()) annotations_.erase(it);
+}
+
+void AnnotationStore::setInterpolationEndpoint(int64_t t, AnnotationKind kind) {
+    const auto it = annotations_.find(t);
+    if (it != annotations_.end()) {
+        auto& vec = it->second;
+        vec.erase(std::remove_if(vec.begin(), vec.end(), [kind](const auto& ann) {
+            if (const auto* endpoint =
+                    dynamic_cast<const InterpolationEndpoint*>(ann.get()))
+                return endpoint->kind() == kind;
+            if (kind == AnnotationKind::kPoint)
+                return dynamic_cast<const PointAnnotation*>(ann.get()) != nullptr;
+            if (kind == AnnotationKind::kEyeTracking)
+                return dynamic_cast<const EyeTracking*>(ann.get()) != nullptr;
+            return dynamic_cast<const BoundingBox*>(ann.get()) != nullptr;
+        }), vec.end());
+        if (vec.empty()) annotations_.erase(it);
+    }
+    add(std::make_unique<InterpolationEndpoint>(t, kind));
 }
 
 // ---------------------------------------------------------------------------

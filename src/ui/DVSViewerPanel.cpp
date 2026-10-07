@@ -104,7 +104,7 @@ void DVSViewerPanel::draw() {
     // Annotation toolbar (Annotate / Stop / Save)
     ImGui::SameLine(0.f, 16.f);
     setAnnotationImageSize(tex_w_, tex_h_);
-    drawAnnotationControls();
+    drawAnnotationControls(annotationTimeUs(last_time_));
 
     // img_origin / img_scale are set inside the texture-valid branch so that
     // both the interaction logic and annotation overlay rendering use the same

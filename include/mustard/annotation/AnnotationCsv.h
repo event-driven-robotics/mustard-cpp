@@ -9,6 +9,11 @@ class AnnotationStore;
 
 enum class AnnotationCsvType { kPoints, kEyeTracking, kBoundingBoxes };
 
+struct AnnotationCsvSaveSettings {
+    bool include_interpolated{false};
+    int interpolation_fps{30};
+};
+
 /// Parse a typed annotation CSV (type is detected from its exact header) and
 /// merge it atomically into @p store. Point records replace points at the same
 /// timestamp. width/height <= 0 disable upper-bound coordinate validation.
@@ -21,7 +26,8 @@ bool saveAnnotationCsvFiles(const std::string& directory,
                             const std::string& video_stem,
                             const AnnotationStore& store, bool overwrite,
                             std::vector<std::string>& written,
-                            std::string& error);
+                            std::string& error,
+                            AnnotationCsvSaveSettings settings = {});
 
 /// Find annotations for a file-backed source or image-sequence directory.
 /// Source-specific names take precedence over folder-level names. Ambiguous

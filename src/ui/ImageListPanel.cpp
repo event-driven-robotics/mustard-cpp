@@ -102,7 +102,10 @@ void ImageListPanel::draw() {
     }
 
     setAnnotationImageSize(tex_w_, tex_h_);
-    drawAnnotationControls();
+    const int64_t annotation_time_us = last_index_ >= 0
+        ? static_cast<int64_t>(last_index_) * kFrameDurationUs
+        : int64_t{-1};
+    drawAnnotationControls(annotation_time_us);
 
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     if (tex_id_ != 0 && tex_w_ > 0 && tex_h_ > 0 &&

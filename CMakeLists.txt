@@ -64,7 +64,9 @@ add_library(mustard STATIC
     src/annotation/BoundingBox.cpp
     src/annotation/EyeTracking.cpp
     src/annotation/PointAnnotation.cpp
+    src/annotation/InterpolationEndpoint.cpp
     src/annotation/AnnotationStore.cpp
+    src/annotation/AnnotationInterpolation.cpp
     src/annotation/AnnotationCsv.cpp
 )
 target_include_directories(mustard PUBLIC include)

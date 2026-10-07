@@ -1,14 +1,17 @@
 #include "mustard/annotation/AnnotationCsv.h"
 
+#include "mustard/annotation/AnnotationInterpolation.h"
 #include "mustard/annotation/AnnotationStore.h"
 #include "mustard/annotation/BoundingBox.h"
 #include "mustard/annotation/EyeTracking.h"
 #include "mustard/annotation/PointAnnotation.h"
+#include "mustard/annotation/InterpolationEndpoint.h"
 
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <utility>
@@ -120,6 +123,11 @@ bool parseFile(const std::string& path, int width, int height, Parsed& parsed,
             return false;
         }
         if (type == AnnotationCsvType::kPoints) {
+            if (f[1].empty() && f[2].empty()) {
+                parsed.push_back(std::make_unique<InterpolationEndpoint>(
+                    t, AnnotationKind::kPoint));
+                continue;
+            }
             float x, y;
             if (!parseFloat(f[1], x) || !parseFloat(f[2], y) ||
                 !pointInBounds(x, y, width, height)) {
@@ -128,6 +136,12 @@ bool parseFile(const std::string& path, int width, int height, Parsed& parsed,
             }
             parsed.push_back(std::make_unique<PointAnnotation>(t, x, y));
         } else if (type == AnnotationCsvType::kEyeTracking) {
+            if (f[1].empty() && f[2].empty() && f[3].empty() &&
+                f[4].empty() && f[5].empty()) {
+                parsed.push_back(std::make_unique<InterpolationEndpoint>(
+                    t, AnnotationKind::kEyeTracking));
+                continue;
+            }
             float phi, theta, x, y, radius;
             if (!parseFloat(f[1], phi) || !parseFloat(f[2], theta) ||
                 !parseFloat(f[3], x) || !parseFloat(f[4], y) ||
@@ -139,6 +153,12 @@ bool parseFile(const std::string& path, int width, int height, Parsed& parsed,
             }
             parsed.push_back(std::make_unique<EyeTracking>(t, phi, theta, x, y, radius));
         } else {
+            if (f[1].empty() && f[2].empty() && f[3].empty() &&
+                f[4].empty() && f[5].empty()) {
+                parsed.push_back(std::make_unique<InterpolationEndpoint>(
+                    t, AnnotationKind::kBoundingBox));
+                continue;
+            }
             float x, y, w, h;
             if (!parseFloat(f[1], x) || !parseFloat(f[2], y) ||
                 !parseFloat(f[3], w) || !parseFloat(f[4], h) ||
@@ -198,6 +218,11 @@ bool loadAnnotationCsv(const std::string& path, AnnotationStore& store,
     Parsed parsed;
     if (!parseFile(path, width, height, parsed, error)) return false;
     for (auto& ann : parsed) {
+        if (const auto* endpoint =
+                dynamic_cast<const InterpolationEndpoint*>(ann.get())) {
+            store.setInterpolationEndpoint(endpoint->timestamp(), endpoint->kind());
+            continue;
+        }
         if (dynamic_cast<PointAnnotation*>(ann.get()))
             store.removePointsAt(ann->timestamp());
         store.add(std::move(ann));
@@ -209,7 +234,8 @@ bool saveAnnotationCsvFiles(const std::string& directory,
                             const std::string& video_stem,
                             const AnnotationStore& store, bool overwrite,
                             std::vector<std::string>& written,
-                            std::string& error) {
+                            std::string& error,
+                            AnnotationCsvSaveSettings settings) {
     namespace fs = std::filesystem;
     written.clear();
     if (video_stem.empty()) { error = "Video stem is empty"; return false; }
@@ -217,10 +243,51 @@ bool saveAnnotationCsvFiles(const std::string& directory,
     Output points{"points", "timestamp,x,y"};
     Output eyes{"eye_tracking", "timestamp,phi,theta,center_x,center_y,radius"};
     Output boxes{"bounding_boxes", "timestamp,x,y,w,h,label"};
-    for (const Annotation* ann : store.all()) {
+    const auto authored = store.all();
+    std::vector<std::unique_ptr<Annotation>> generated;
+    if (settings.include_interpolated) {
+        if (settings.interpolation_fps < 1 || settings.interpolation_fps > 240) {
+            error = "Interpolation FPS must be between 1 and 240";
+            return false;
+        }
+        if (!authored.empty()) {
+            const int64_t first_t = authored.front()->timestamp();
+            const int64_t last_t = authored.back()->timestamp();
+            const long double fps = settings.interpolation_fps;
+            int64_t frame = static_cast<int64_t>(
+                std::floor(static_cast<long double>(first_t) * fps / 1'000'000.L));
+            if (frame < 0) frame = 0;
+            for (;; ++frame) {
+                const long double sampled =
+                    static_cast<long double>(frame) * 1'000'000.L / fps;
+                if (sampled > static_cast<long double>(last_t)) break;
+                const int64_t t = static_cast<int64_t>(sampled);
+                auto at_t = interpolateAnnotationsAt(store, t);
+                for (auto& ann : at_t) generated.push_back(std::move(ann));
+                if (frame == std::numeric_limits<int64_t>::max()) break;
+            }
+        }
+    }
+
+    const auto add_row = [&](const Annotation* ann) {
         if (dynamic_cast<const PointAnnotation*>(ann)) points.rows.push_back(ann);
         else if (dynamic_cast<const EyeTracking*>(ann)) eyes.rows.push_back(ann);
         else if (dynamic_cast<const BoundingBox*>(ann)) boxes.rows.push_back(ann);
+        else if (const auto* endpoint =
+                     dynamic_cast<const InterpolationEndpoint*>(ann)) {
+            if (endpoint->kind() == AnnotationKind::kPoint) points.rows.push_back(ann);
+            else if (endpoint->kind() == AnnotationKind::kEyeTracking)
+                eyes.rows.push_back(ann);
+            else boxes.rows.push_back(ann);
+        }
+    };
+    for (const Annotation* ann : authored) add_row(ann);
+    for (const auto& ann : generated) add_row(ann.get());
+    for (Output* output : {&points, &eyes, &boxes}) {
+        std::stable_sort(output->rows.begin(), output->rows.end(),
+                         [](const Annotation* a, const Annotation* b) {
+                             return a->timestamp() < b->timestamp();
+                         });
     }
     for (const Output* output : {&points, &eyes, &boxes}) {
         if (output->rows.empty()) continue;
@@ -239,7 +306,13 @@ bool saveAnnotationCsvFiles(const std::string& directory,
         if (!out) { error = "Cannot write annotation file: " + path.string(); return false; }
         out << output->header << '\n' << std::setprecision(9);
         for (const Annotation* ann : output->rows) {
-            if (const auto* p = dynamic_cast<const PointAnnotation*>(ann))
+            if (const auto* endpoint =
+                    dynamic_cast<const InterpolationEndpoint*>(ann)) {
+                out << endpoint->timestamp();
+                const int blanks = endpoint->kind() == AnnotationKind::kPoint ? 2 : 5;
+                for (int i = 0; i < blanks; ++i) out << ',';
+                out << '\n';
+            } else if (const auto* p = dynamic_cast<const PointAnnotation*>(ann))
                 out << p->timestamp() << ',' << p->x() << ',' << p->y() << '\n';
             else if (const auto* e = dynamic_cast<const EyeTracking*>(ann))
                 out << e->timestamp() << ',' << e->phi() << ',' << e->theta()

@@ -4,6 +4,8 @@
 #include "mustard/annotation/EyeTracking.h"
 #include "mustard/annotation/PointAnnotation.h"
 #include "mustard/annotation/AnnotationCsv.h"
+#include "mustard/annotation/AnnotationInterpolation.h"
+#include "mustard/annotation/InterpolationEndpoint.h"
 #include "ImGuiFileDialog.h"
 #include "imgui.h"
 #include <opencv2/imgproc.hpp>
@@ -106,7 +108,7 @@ void ViewerPanel::setAnnotationStore(std::shared_ptr<AnnotationStore> store) {
     ann_store_ = std::move(store);
 }
 
-void ViewerPanel::drawAnnotationControls() {
+void ViewerPanel::drawAnnotationControls(int64_t annotation_time_us) {
     advanceVideoExport();
     if (!annotating_) {
         if (ImGui::Button("Annotate")) {
@@ -133,17 +135,52 @@ void ViewerPanel::drawAnnotationControls() {
         if (ImGui::Button("Stop")) {
             annotating_ = false;
         }
+        ImGui::SameLine();
+        if (annotation_time_us < 0) ImGui::BeginDisabled();
+        if (ImGui::Button("No Annotation Here") && ann_store_) {
+            AnnotationKind kind = AnnotationKind::kBoundingBox;
+            if (annotation_type_ == AnnotationType::kPoint)
+                kind = AnnotationKind::kPoint;
+            else if (annotation_type_ == AnnotationType::kEyeTracking)
+                kind = AnnotationKind::kEyeTracking;
+            ann_store_->setInterpolationEndpoint(annotation_time_us, kind);
+            export_status_ = "Marked annotation endpoint";
+        }
+        if (annotation_time_us < 0) ImGui::EndDisabled();
     }
 
     ImGui::SameLine();
     const bool has_annotations = ann_store_ && ann_store_->totalCount() > 0;
+    const bool can_interpolate = has_annotations || annotating_;
+    if (!can_interpolate) ImGui::BeginDisabled();
+    ImGui::Checkbox("Interpolate", &interpolation_enabled_);
+    if (!can_interpolate) ImGui::EndDisabled();
+
+    ImGui::SameLine();
     if (!has_annotations) ImGui::BeginDisabled();
     if (ImGui::Button("Save Annotations")) {
-        const std::string key = "SaveAnnotations_" + label_;
-        ImGuiFileDialog::Instance()->OpenDialog(
-            key, "Choose Annotation Directory", nullptr, ".");
+        ImGui::OpenPopup(("Save annotation settings##" + label_).c_str());
     }
     if (!has_annotations) ImGui::EndDisabled();
+
+    const std::string save_settings_key = "Save annotation settings##" + label_;
+    if (ImGui::BeginPopupModal(save_settings_key.c_str(), nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Checkbox("Save interpolated values", &save_interpolated_values_);
+        if (!save_interpolated_values_) ImGui::BeginDisabled();
+        ImGui::InputInt("Interpolation FPS", &interpolation_save_fps_);
+        interpolation_save_fps_ = std::clamp(interpolation_save_fps_, 1, 240);
+        if (!save_interpolated_values_) ImGui::EndDisabled();
+        if (ImGui::Button("Choose Directory")) {
+            const std::string key = "SaveAnnotations_" + label_;
+            ImGuiFileDialog::Instance()->OpenDialog(
+                key, "Choose Annotation Directory", nullptr, ".");
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
 
     // Display the file-save dialog when it is open for this panel
     const std::string key = "SaveAnnotations_" + label_;
@@ -157,8 +194,10 @@ void ViewerPanel::drawAnnotationControls() {
                 pending_save_directory_ = ImGuiFileDialog::Instance()->GetCurrentPath();
             std::vector<std::string> written;
             std::string error;
+            const AnnotationCsvSaveSettings settings{
+                save_interpolated_values_, interpolation_save_fps_};
             if (!saveAnnotationCsvFiles(pending_save_directory_, annotation_file_stem_,
-                                        *ann_store_, false, written, error)) {
+                                        *ann_store_, false, written, error, settings)) {
                 if (error.find("already exists") != std::string::npos)
                     ImGui::OpenPopup(("Overwrite annotations?##" + label_).c_str());
                 else
@@ -178,8 +217,10 @@ void ViewerPanel::drawAnnotationControls() {
         if (ImGui::Button("Overwrite") && ann_store_) {
             std::vector<std::string> written;
             std::string error;
+            const AnnotationCsvSaveSettings settings{
+                save_interpolated_values_, interpolation_save_fps_};
             if (saveAnnotationCsvFiles(pending_save_directory_, annotation_file_stem_,
-                                       *ann_store_, true, written, error))
+                                       *ann_store_, true, written, error, settings))
                 export_status_ = "Saved " + std::to_string(written.size()) + " annotation file(s)";
             else
                 export_status_ = error;
@@ -533,7 +574,9 @@ void ViewerPanel::drawAnnotationInteraction(ImVec2 img_origin, float scale, int6
 
 void ViewerPanel::drawAnnotationOverlay(ImVec2 img_origin, float scale, int64_t t) const {
     if (!ann_store_) return;
-    const auto* anns = ann_store_->queryAt(t);
+    const auto* anns = interpolation_enabled_
+        ? ann_store_->queryExact(t)
+        : ann_store_->queryAt(t);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     if (anns) for (std::size_t i = 0; i < anns->size(); ++i) {
         if (dynamic_cast<const PointAnnotation*>((*anns)[i].get())) continue;
@@ -548,16 +591,30 @@ void ViewerPanel::drawAnnotationOverlay(ImVec2 img_origin, float scale, int64_t 
         (*anns)[i]->renderOverlay(dl, img_origin, scale);
     }
 
-    const auto nearby = ann_store_->queryRange(t - 20'000, t + 20'001);
-    const PointAnnotation* closest = nullptr;
-    int64_t closest_delta = 20'001;
-    for (const Annotation* ann : nearby) {
-        const auto* point = dynamic_cast<const PointAnnotation*>(ann);
-        if (!point) continue;
-        const int64_t delta = std::llabs(point->timestamp() - t);
-        if (delta < closest_delta) { closest = point; closest_delta = delta; }
+    if (interpolation_enabled_) {
+        if (anns) for (const auto& ann : *anns) {
+            if (const auto* point = dynamic_cast<const PointAnnotation*>(ann.get()))
+                point->renderOverlay(dl, img_origin, scale);
+        }
+        auto interpolated = interpolateAnnotationsAt(*ann_store_, t);
+        for (const auto& ann : interpolated) {
+            if (dragging_ && annotation_type_ == AnnotationType::kEyeTracking &&
+                dynamic_cast<const EyeTracking*>(ann.get()))
+                continue;
+            ann->renderOverlay(dl, img_origin, scale);
+        }
+    } else {
+        const auto nearby = ann_store_->queryRange(t - 20'000, t + 20'001);
+        const PointAnnotation* closest = nullptr;
+        int64_t closest_delta = 20'001;
+        for (const Annotation* ann : nearby) {
+            const auto* point = dynamic_cast<const PointAnnotation*>(ann);
+            if (!point) continue;
+            const int64_t delta = std::llabs(point->timestamp() - t);
+            if (delta < closest_delta) { closest = point; closest_delta = delta; }
+        }
+        if (closest) closest->renderOverlay(dl, img_origin, scale);
     }
-    if (closest) closest->renderOverlay(dl, img_origin, scale);
 }
 
 } // namespace mustard

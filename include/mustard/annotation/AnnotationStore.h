@@ -9,6 +9,8 @@
 
 namespace mustard {
 
+enum class AnnotationKind;
+
 /// Timestamp-keyed container for Annotation objects.
 ///
 /// Keys are anchor timestamps in microseconds.  Multiple annotations may
@@ -34,9 +36,11 @@ public:
     // Query
     // ------------------------------------------------------------------
 
-    /// Exact-timestamp lookup.
-    /// @return Pointer to the bucket vector, or nullptr if none exists.
+    /// Legacy nearest-timestamp lookup within 150 ms.
     const std::vector<std::unique_ptr<Annotation>>* queryAt(int64_t t) const;
+
+    /// Exact-timestamp lookup without the legacy nearest-bucket tolerance.
+    const std::vector<std::unique_ptr<Annotation>>* queryExact(int64_t t) const;
 
     /// Half-open range query [t0, t1).
     /// @return Flat list of raw pointers; ownership stays in the store.
@@ -50,6 +54,9 @@ public:
 
     /// Remove Point annotations at exactly @p t, preserving other types.
     void removePointsAt(int64_t t);
+
+    /// Replace annotations of @p kind at exactly @p t with an absence marker.
+    void setInterpolationEndpoint(int64_t t, AnnotationKind kind);
 
     // ------------------------------------------------------------------
     // Serialisation
