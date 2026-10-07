@@ -45,6 +45,12 @@ public:
     /// Total number of annotations across all timestamps.
     std::size_t totalCount() const;
 
+    /// All annotations in timestamp order. Ownership remains in the store.
+    std::vector<const Annotation*> all() const;
+
+    /// Remove Point annotations at exactly @p t, preserving other types.
+    void removePointsAt(int64_t t);
+
     // ------------------------------------------------------------------
     // Serialisation
     // ------------------------------------------------------------------

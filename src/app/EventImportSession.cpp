@@ -1,6 +1,7 @@
 #include "mustard/app/EventImportSession.h"
 #include "mustard/data/events/IITDatalogStream.h"
 #include "mustard/data/events/PropheseeRawStream.h"
+#include "mustard/annotation/AnnotationCsv.h"
 
 #include <algorithm>
 #include <cctype>
@@ -27,13 +28,26 @@ public:
                   ImportDiagnostic& error, ImportCancellation cancel, Progress progress) override {
         namespace fs = std::filesystem;
         error.path = path;
+        std::string effective_path = path;
+        std::string resolution_error;
         std::error_code ec;
-        if (!fs::exists(path, ec) || ec) {
+        if (!fs::is_directory(effective_path, ec)) {
+            std::string redirected;
+            if (resolveDirectAnnotationSelection(effective_path, redirected,
+                                                 resolution_error))
+                effective_path = std::move(redirected);
+            else if (!resolution_error.empty()) {
+                error.message = resolution_error;
+                return false;
+            }
+        }
+        ec.clear();
+        if (!fs::exists(effective_path, ec) || ec) {
             error.message = "Cannot access the selected file or folder";
             return false;
         }
-        if (!fs::is_directory(path, ec)) {
-            auto file = EventImportSession::fileCandidate(path, true);
+        if (!fs::is_directory(effective_path, ec)) {
+            auto file = EventImportSession::fileCandidate(effective_path, true);
             if (!file) {
                 error.message = "Unsupported file type. Select HDF5, CSV, TSV, TXT, LOG, RAW, or video.";
                 return false;
@@ -41,15 +55,15 @@ public:
             files.push_back(*file);
             return true;
         }
+        std::vector<fs::path> regular_files;
         std::map<std::string, std::size_t> image_counts;
-        fs::recursive_directory_iterator it(path, fs::directory_options::skip_permission_denied, ec);
+        fs::recursive_directory_iterator it(effective_path, fs::directory_options::skip_permission_denied, ec);
         const fs::recursive_directory_iterator end;
         while (it != end) {
             if (importCancelled(cancel)) return false;
             const auto entry = *it;
             if (entry.is_regular_file(ec) && !ec) {
-                const auto fp = entry.path().string();
-                if (auto file = EventImportSession::fileCandidate(fp, false)) files.push_back(*file);
+                regular_files.push_back(entry.path());
                 const auto ext = lowerExtension(entry.path());
                 if (ext == ".png" || ext == ".jpg" || ext == ".jpeg")
                     ++image_counts[entry.path().parent_path().string()];
@@ -61,6 +75,37 @@ public:
         for (const auto& count : image_counts) {
             if (count.second > 50) files.push_back({count.first, fs::path(count.first).filename().string(),
                                                   ImportSourceKind::Images});
+        }
+        std::vector<ImportCandidate> candidates;
+        for (const auto& file_path : regular_files) {
+            if (auto file = EventImportSession::fileCandidate(file_path.string(), false))
+                candidates.push_back(*file);
+        }
+        for (const auto& candidate : candidates) {
+            std::string token;
+            std::string source_stem;
+            if (!parseAnnotationFilename(candidate.path, token, source_stem)) {
+                files.push_back(candidate);
+                continue;
+            }
+            if (source_stem.empty()) continue;
+            const fs::path annotation_path(candidate.path);
+            const auto paired_file = std::find_if(candidates.begin(), candidates.end(),
+                [&](const ImportCandidate& other) {
+                    const fs::path other_path(other.path);
+                    return other.path != candidate.path &&
+                           other_path.parent_path() == annotation_path.parent_path() &&
+                           other_path.stem().string() == source_stem;
+                });
+            const auto paired_images = std::find_if(files.begin(), files.end(),
+                [&](const ImportCandidate& other) {
+                    const fs::path other_path(other.path);
+                    return other.kind == ImportSourceKind::Images &&
+                           other_path.parent_path() == annotation_path.parent_path() &&
+                           other_path.filename().string() == source_stem;
+                });
+            if (paired_file == candidates.end() && paired_images == files.end())
+                files.push_back(candidate);
         }
         std::sort(files.begin(), files.end(), [](const auto& a, const auto& b) { return a.path < b.path; });
         progress(1.f, "Folder scan complete");

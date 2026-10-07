@@ -39,6 +39,8 @@ public:
 
     bool    isLoaded()    const noexcept { return loaded_; }
     int64_t durationUs()  const noexcept { return duration_us_; }
+    int imageWidth() const noexcept { return tex_w_; }
+    int imageHeight() const noexcept { return tex_h_; }
 
     void draw()                   override;
     void onTimeChanged(int64_t t) override;

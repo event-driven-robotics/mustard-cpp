@@ -25,6 +25,12 @@ using namespace mustard;
 
 class DVSViewerPanelTest : public ::testing::Test {};
 
+class AnnotationTimePanel : public DVSViewerPanel {
+public:
+    AnnotationTimePanel() : DVSViewerPanel(nullptr, "annotation-time") {}
+    using ViewerPanel::annotationTimeUs;
+};
+
 // ---------------------------------------------------------------------------
 // Static constant
 // ---------------------------------------------------------------------------
@@ -50,6 +56,13 @@ TEST_F(DVSViewerPanelTest, EventThemeDefaultsToJaerAndCanBeChanged) {
 
     panel.setEventTheme(DVSViewerPanel::EventTheme::kEdpr);
     EXPECT_EQ(panel.eventTheme(), DVSViewerPanel::EventTheme::kEdpr);
+}
+
+TEST_F(DVSViewerPanelTest, AnnotationTimeIsRelativeToPanelStartOffset) {
+    AnnotationTimePanel panel;
+    panel.setStartOffset(9'000'000);
+    EXPECT_EQ(panel.annotationTimeUs(9'000'000), 0);
+    EXPECT_EQ(panel.annotationTimeUs(9'250'000), 250'000);
 }
 
 // ---------------------------------------------------------------------------

@@ -101,6 +101,7 @@ void ImageListPanel::draw() {
         return;
     }
 
+    setAnnotationImageSize(tex_w_, tex_h_);
     drawAnnotationControls();
 
     const ImVec2 avail = ImGui::GetContentRegionAvail();

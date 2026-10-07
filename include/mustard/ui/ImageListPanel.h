@@ -41,6 +41,8 @@ public:
 
     bool isLoaded()   const noexcept { return loaded_; }
     int  imageCount() const noexcept { return static_cast<int>(images_.size()); }
+    int  imageWidth() const noexcept { return tex_w_; }
+    int  imageHeight() const noexcept { return tex_h_; }
 
     void draw()                   override;
     void onTimeChanged(int64_t t) override;

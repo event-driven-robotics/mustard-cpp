@@ -93,6 +93,7 @@ void RGBVideoPanel::draw() {
         return;
     }
 
+    setAnnotationImageSize(tex_w_, tex_h_);
     drawAnnotationControls();
 
     const ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -111,8 +112,9 @@ void RGBVideoPanel::draw() {
         const ImVec2 img_origin = ImGui::GetCursorScreenPos();
         ImGui::Image(static_cast<ImTextureID>(tex_id_), ImVec2(dw, dh));
 
-        drawAnnotationInteraction(img_origin, scale, last_time_us_);
-        drawAnnotationOverlay(img_origin, scale, last_time_us_);
+        const int64_t annotation_time_us = annotationTimeUs(last_time_us_);
+        drawAnnotationInteraction(img_origin, scale, annotation_time_us);
+        drawAnnotationOverlay(img_origin, scale, annotation_time_us);
     } else {
         ImGui::TextDisabled("Waiting for first frame\xe2\x80\xa6");
     }

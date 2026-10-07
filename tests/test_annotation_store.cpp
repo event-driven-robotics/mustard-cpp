@@ -9,6 +9,7 @@
 #include "mustard/annotation/AnnotationStore.h"
 #include "mustard/annotation/BoundingBox.h"
 #include "mustard/annotation/EyeTracking.h"
+#include "mustard/annotation/PointAnnotation.h"
 
 #include <gtest/gtest.h>
 
@@ -265,4 +266,31 @@ TEST(AnnotationStoreTest, DeserializeMixedAnnotationTypes) {
     ASSERT_EQ(anns->size(), 2u);
     EXPECT_NE(dynamic_cast<const BoundingBox*>((*anns)[0].get()), nullptr);
     EXPECT_NE(dynamic_cast<const EyeTracking*>((*anns)[1].get()), nullptr);
+}
+
+TEST(AnnotationStoreTest, PointSerializeDeserializeRoundTrip) {
+    AnnotationStore store;
+    store.add(std::make_unique<PointAnnotation>(1234, 12.5f, 42.25f));
+
+    AnnotationStore restored;
+    ASSERT_TRUE(restored.deserialize(store.serialize()));
+    const auto* annotations = restored.queryAt(1234);
+    ASSERT_NE(annotations, nullptr);
+    ASSERT_EQ(annotations->size(), 1u);
+    const auto* point = dynamic_cast<const PointAnnotation*>((*annotations)[0].get());
+    ASSERT_NE(point, nullptr);
+    EXPECT_EQ(point->typeName(), "Point");
+    EXPECT_FLOAT_EQ(point->x(), 12.5f);
+    EXPECT_FLOAT_EQ(point->y(), 42.25f);
+}
+
+TEST(AnnotationStoreTest, RemovePointsAtPreservesOtherTypes) {
+    AnnotationStore store;
+    store.add(std::make_unique<PointAnnotation>(100, 1.f, 2.f));
+    store.add(makeBox(100));
+    store.removePointsAt(100);
+    const auto* annotations = store.queryAt(100);
+    ASSERT_NE(annotations, nullptr);
+    ASSERT_EQ(annotations->size(), 1u);
+    EXPECT_NE(dynamic_cast<const BoundingBox*>((*annotations)[0].get()), nullptr);
 }

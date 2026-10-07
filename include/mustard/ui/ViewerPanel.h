@@ -13,6 +13,7 @@ namespace mustard {
 enum class AnnotationType {
     kBoundingBox,
     kEyeTracking,
+    kPoint,
 };
 
 enum class EyeTrackingDragMode {
@@ -74,6 +75,8 @@ public:
     /// Attach an AnnotationStore.  Annotations are rendered as overlays and
     /// can be saved via the toolbar Save button.
     void setAnnotationStore(std::shared_ptr<AnnotationStore> store);
+    std::shared_ptr<AnnotationStore> annotationStore() const noexcept { return ann_store_; }
+    void setAnnotationFileStem(std::string stem) { annotation_file_stem_ = std::move(stem); }
 
 protected:
     std::string label_;
@@ -106,6 +109,19 @@ protected:
     std::size_t eye_edit_index_{0};
     float   eye_drag_start_center_x_{0.f};
     float   eye_drag_start_center_y_{0.f};
+    int annotation_image_width_{0};
+    int annotation_image_height_{0};
+
+    void setAnnotationImageSize(int width, int height) noexcept {
+        annotation_image_width_ = width;
+        annotation_image_height_ = height;
+    }
+
+    /// Annotation files always use time relative to the beginning of their
+    /// stream, regardless of the stream's position on the global timeline.
+    int64_t annotationTimeUs(int64_t global_time_us) const noexcept {
+        return global_time_us - start_offset_us_;
+    }
 
     /// Render the annotation toolbar row (Annotate / Stop / Save).
     /// Call once per frame from within an ImGui::Begin…End block.
@@ -138,6 +154,8 @@ private:
     bool startVideoExport(const std::string& output_path, std::string& error);
     void advanceVideoExport();
     std::unique_ptr<ExportJob> export_job_;
+    std::string annotation_file_stem_{"annotations"};
+    std::string pending_save_directory_;
 };
 
 } // namespace mustard

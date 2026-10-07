@@ -36,6 +36,11 @@ target_link_libraries(test_annotation_store PRIVATE mustard imgui GTest::gtest_m
 target_include_directories(test_annotation_store PRIVATE ${CMAKE_SOURCE_DIR}/include)
 add_test(NAME test_annotation_store COMMAND test_annotation_store)
 
+add_executable(test_annotation_csv test_annotation_csv.cpp)
+target_link_libraries(test_annotation_csv PRIVATE mustard imgui GTest::gtest_main)
+target_include_directories(test_annotation_csv PRIVATE ${CMAKE_SOURCE_DIR}/include)
+add_test(NAME test_annotation_csv COMMAND test_annotation_csv)
+
 add_executable(test_rgb_frame_conversion
     test_rgb_frame_conversion.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/RGBFrameConversion.cpp

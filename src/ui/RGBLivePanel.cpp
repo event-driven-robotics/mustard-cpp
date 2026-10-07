@@ -39,6 +39,7 @@ void RGBLivePanel::draw() {
         return;
     }
 
+    setAnnotationImageSize(tex_w_, tex_h_);
     drawAnnotationControls();
 
     if (copyLatestFrame()) {
@@ -60,8 +61,9 @@ void RGBLivePanel::draw() {
 
         const ImVec2 img_origin = ImGui::GetCursorScreenPos();
         ImGui::Image(static_cast<ImTextureID>(tex_id_), ImVec2(dw, dh));
-        drawAnnotationInteraction(img_origin, scale, last_time_us_);
-        drawAnnotationOverlay(img_origin, scale, last_time_us_);
+        const int64_t annotation_time_us = annotationTimeUs(last_time_us_);
+        drawAnnotationInteraction(img_origin, scale, annotation_time_us);
+        drawAnnotationOverlay(img_origin, scale, annotation_time_us);
     } else if (capture_failed_) {
         ImGui::TextDisabled("Failed to open RGB camera");
     } else {

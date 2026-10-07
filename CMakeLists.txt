@@ -63,7 +63,9 @@ add_library(mustard STATIC
     src/app/EventImportSession.cpp
     src/annotation/BoundingBox.cpp
     src/annotation/EyeTracking.cpp
+    src/annotation/PointAnnotation.cpp
     src/annotation/AnnotationStore.cpp
+    src/annotation/AnnotationCsv.cpp
 )
 target_include_directories(mustard PUBLIC include)
 # imgui is needed here so that annotation renderers can find imgui.h at compile time.

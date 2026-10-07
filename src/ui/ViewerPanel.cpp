@@ -2,6 +2,8 @@
 #include "mustard/ui/ViewerPanel.h"
 #include "mustard/annotation/BoundingBox.h"
 #include "mustard/annotation/EyeTracking.h"
+#include "mustard/annotation/PointAnnotation.h"
+#include "mustard/annotation/AnnotationCsv.h"
 #include "ImGuiFileDialog.h"
 #include "imgui.h"
 #include <opencv2/imgproc.hpp>
@@ -9,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -94,7 +97,8 @@ void remove_eye_tracking_annotations_in_bin(AnnotationStore& store, int64_t t) {
 
 ViewerPanel::~ViewerPanel() = default;
 
-ViewerPanel::ViewerPanel(std::string label) : label_(std::move(label)) {}
+ViewerPanel::ViewerPanel(std::string label)
+    : label_(std::move(label)), ann_store_(std::make_shared<AnnotationStore>()) {}
 ViewerPanel::ViewerPanel(ViewerPanel&&) = default;
 ViewerPanel& ViewerPanel::operator=(ViewerPanel&&) = default;
 
@@ -119,29 +123,27 @@ void ViewerPanel::drawAnnotationControls() {
                 annotation_type_ = AnnotationType::kEyeTracking;
                 annotating_      = true;
             }
+            if (ImGui::Selectable("Point")) {
+                annotation_type_ = AnnotationType::kPoint;
+                annotating_ = true;
+            }
             ImGui::EndPopup();
         }
     } else {
         if (ImGui::Button("Stop")) {
             annotating_ = false;
         }
-        ImGui::SameLine();
-        const bool has_annotations = ann_store_ && ann_store_->totalCount() > 0;
-        if (!has_annotations) {
-            ImGui::BeginDisabled();
-        }
-        if (ImGui::Button("Save Annotations")) {
-            // Use a per-panel key so multiple panels can coexist
-            const std::string key = "SaveAnnotations_" + label_;
-            ImGuiFileDialog::Instance()->OpenDialog(
-                key, "Save Annotations", ".txt",
-                ".", "annotations", 1, nullptr,
-                ImGuiFileDialogFlags_ConfirmOverwrite);
-        }
-        if (!has_annotations) {
-            ImGui::EndDisabled();
-        }
     }
+
+    ImGui::SameLine();
+    const bool has_annotations = ann_store_ && ann_store_->totalCount() > 0;
+    if (!has_annotations) ImGui::BeginDisabled();
+    if (ImGui::Button("Save Annotations")) {
+        const std::string key = "SaveAnnotations_" + label_;
+        ImGuiFileDialog::Instance()->OpenDialog(
+            key, "Choose Annotation Directory", nullptr, ".");
+    }
+    if (!has_annotations) ImGui::EndDisabled();
 
     // Display the file-save dialog when it is open for this panel
     const std::string key = "SaveAnnotations_" + label_;
@@ -150,10 +152,64 @@ void ViewerPanel::drawAnnotationControls() {
             ImVec2(600.f, 400.f)))
     {
         if (ImGuiFileDialog::Instance()->IsOk() && ann_store_) {
-            const std::string path =
-                ImGuiFileDialog::Instance()->GetFilePathName();
-            std::ofstream f(path, std::ios::out | std::ios::trunc);
-            f << ann_store_->serialize();
+            pending_save_directory_ = ImGuiFileDialog::Instance()->GetFilePathName();
+            if (pending_save_directory_.empty())
+                pending_save_directory_ = ImGuiFileDialog::Instance()->GetCurrentPath();
+            std::vector<std::string> written;
+            std::string error;
+            if (!saveAnnotationCsvFiles(pending_save_directory_, annotation_file_stem_,
+                                        *ann_store_, false, written, error)) {
+                if (error.find("already exists") != std::string::npos)
+                    ImGui::OpenPopup(("Overwrite annotations?##" + label_).c_str());
+                else
+                    export_status_ = error;
+            } else {
+                export_status_ = "Saved " + std::to_string(written.size()) + " annotation file(s)";
+                pending_save_directory_.clear();
+            }
+        }
+        ImGuiFileDialog::Instance()->Close();
+    }
+
+    const std::string overwrite_key = "Overwrite annotations?##" + label_;
+    if (ImGui::BeginPopupModal(overwrite_key.c_str(), nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("One or more annotation CSV files already exist.");
+        if (ImGui::Button("Overwrite") && ann_store_) {
+            std::vector<std::string> written;
+            std::string error;
+            if (saveAnnotationCsvFiles(pending_save_directory_, annotation_file_stem_,
+                                       *ann_store_, true, written, error))
+                export_status_ = "Saved " + std::to_string(written.size()) + " annotation file(s)";
+            else
+                export_status_ = error;
+            pending_save_directory_.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            pending_save_directory_.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    ImGui::SameLine();
+    if (ImGui::Button("Load Annotations")) {
+        ImGuiFileDialog::Instance()->OpenDialog(
+            "LoadAnnotations_" + label_, "Load Annotations", ".*", ".");
+    }
+    const std::string load_key = "LoadAnnotations_" + label_;
+    if (ImGuiFileDialog::Instance()->Display(load_key.c_str(),
+            ImGuiWindowFlags_NoCollapse, ImVec2(600.f, 400.f))) {
+        if (ImGuiFileDialog::Instance()->IsOk() && ann_store_) {
+            std::string error;
+            if (loadAnnotationCsv(ImGuiFileDialog::Instance()->GetFilePathName(),
+                                  *ann_store_, annotation_image_width_,
+                                  annotation_image_height_, error))
+                export_status_ = "Annotations loaded";
+            else
+                export_status_ = error;
         }
         ImGuiFileDialog::Instance()->Close();
     }
@@ -323,6 +379,25 @@ void ViewerPanel::drawAnnotationInteraction(ImVec2 img_origin, float scale, int6
         return;
     }
 
+    if (annotation_type_ == AnnotationType::kPoint) {
+        if (scale > 0.f && ImGui::IsItemHovered() && ImGui::IsMouseClicked(0)) {
+            const ImVec2 p = screen_to_sensor(ImGui::GetMousePos(), img_origin, scale);
+            const auto nearby = ann_store_->queryRange(t - 20'000, t + 20'001);
+            const PointAnnotation* closest = nullptr;
+            int64_t closest_delta = 20'001;
+            for (const Annotation* ann : nearby) {
+                const auto* point = dynamic_cast<const PointAnnotation*>(ann);
+                if (!point) continue;
+                const int64_t delta = std::llabs(point->timestamp() - t);
+                if (delta < closest_delta) { closest = point; closest_delta = delta; }
+            }
+            if (closest) ann_store_->removePointsAt(closest->timestamp());
+            ann_store_->removePointsAt(t);
+            ann_store_->add(std::make_unique<PointAnnotation>(t, p.x, p.y));
+        }
+        return;
+    }
+
     if (annotation_type_ == AnnotationType::kBoundingBox) {
         if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(0)) {
             drag_start_ = ImGui::GetMousePos();
@@ -459,9 +534,9 @@ void ViewerPanel::drawAnnotationInteraction(ImVec2 img_origin, float scale, int6
 void ViewerPanel::drawAnnotationOverlay(ImVec2 img_origin, float scale, int64_t t) const {
     if (!ann_store_) return;
     const auto* anns = ann_store_->queryAt(t);
-    if (!anns) return;
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    for (std::size_t i = 0; i < anns->size(); ++i) {
+    if (anns) for (std::size_t i = 0; i < anns->size(); ++i) {
+        if (dynamic_cast<const PointAnnotation*>((*anns)[i].get())) continue;
         if (dragging_ &&
             annotation_type_ == AnnotationType::kEyeTracking &&
             eye_edit_active_) {
@@ -472,6 +547,17 @@ void ViewerPanel::drawAnnotationOverlay(ImVec2 img_origin, float scale, int64_t 
         }
         (*anns)[i]->renderOverlay(dl, img_origin, scale);
     }
+
+    const auto nearby = ann_store_->queryRange(t - 20'000, t + 20'001);
+    const PointAnnotation* closest = nullptr;
+    int64_t closest_delta = 20'001;
+    for (const Annotation* ann : nearby) {
+        const auto* point = dynamic_cast<const PointAnnotation*>(ann);
+        if (!point) continue;
+        const int64_t delta = std::llabs(point->timestamp() - t);
+        if (delta < closest_delta) { closest = point; closest_delta = delta; }
+    }
+    if (closest) closest->renderOverlay(dl, img_origin, scale);
 }
 
 } // namespace mustard

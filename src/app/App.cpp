@@ -1,5 +1,6 @@
 #include "mustard/app/App.h"
 #include "mustard/annotation/AnnotationStore.h"
+#include "mustard/annotation/AnnotationCsv.h"
 #include "mustard/ui/DVSViewerPanel.h"
 #include "mustard/ui/RGBVideoPanel.h"
 #include "mustard/ui/ImageListPanel.h"
@@ -353,6 +354,23 @@ void App::commitImport() {
     viewers_.clear();
 
     ImportTimeRange time_range;
+    std::vector<std::string> annotation_messages;
+    const auto load_annotations = [&](ViewerPanel& panel,
+                                      const std::string& source_path,
+                                      int width, int height) {
+        std::vector<std::string> warnings;
+        const auto annotation_files =
+            discoverAnnotationCsvFiles(source_path, warnings);
+        annotation_messages.insert(annotation_messages.end(),
+                                   warnings.begin(), warnings.end());
+        for (const auto& annotation_path : annotation_files) {
+            std::string error;
+            if (!loadAnnotationCsv(annotation_path, *panel.annotationStore(),
+                                   width, height, error))
+                annotation_messages.push_back(error);
+        }
+    };
+
     for (auto& item : staged) {
         std::shared_ptr<DVSEventStream> stream = item.stream;
         if (!stream && item.loader) {
@@ -366,11 +384,6 @@ void App::commitImport() {
         }
     }
 
-    if (!time_range.empty) {
-        time_ctrl_->setRange(time_range.start, time_range.end);
-        time_ctrl_->seekTo(time_range.start);
-    }
-
     for (auto& item : staged) {
         std::string label = item.source.label;
         if (!item.dataset.empty()) {
@@ -379,24 +392,51 @@ void App::commitImport() {
 
         if (item.stream) {
             auto panel = std::make_unique<DVSViewerPanel>(item.stream, label);
+            panel->setAnnotationFileStem(std::filesystem::path(item.source.path).stem().string());
+            // Event streams use their native (often absolute/epoch) timestamps
+            // on the shared timeline.  Without this offset, DVSViewerPanel's
+            // global-to-stream conversion adds startTime() a second time.  It
+            // happened to work for recordings whose timestamps begin at zero,
+            // but queries for absolute-timestamp recordings were all beyond
+            // the end of the stream.
+            panel->setStartOffset(item.stream->startTime());
             panel->setEventTheme(event_theme_);
+            load_annotations(*panel, item.source.path,
+                             item.stream->sensorWidth(), item.stream->sensorHeight());
             viewers_.push_back(std::move(panel));
         } else if (item.source.kind == ImportSourceKind::Video) {
             auto panel = std::make_unique<RGBVideoPanel>(item.source.path, label);
             if (panel->isLoaded()) {
+                panel->setAnnotationFileStem(
+                    std::filesystem::path(item.source.path).stem().string());
+                load_annotations(*panel, item.source.path,
+                                 panel->imageWidth(), panel->imageHeight());
                 viewers_.push_back(std::move(panel));
             }
         } else if (item.source.kind == ImportSourceKind::Images) {
             auto panel = std::make_unique<ImageListPanel>(item.source.path, label);
             if (panel->isLoaded()) {
+                panel->setAnnotationFileStem(
+                    std::filesystem::path(item.source.path).stem().string());
+                load_annotations(*panel, item.source.path,
+                                 panel->imageWidth(), panel->imageHeight());
                 viewers_.push_back(std::move(panel));
             }
         }
     }
 
+    // Seek only after the panels exist so the observer notification paints
+    // their initial frame immediately instead of leaving them blank until the
+    // user moves the playhead or starts playback.
+    if (!time_range.empty) {
+        time_ctrl_->setRange(time_range.start, time_range.end);
+        time_ctrl_->seekTo(time_range.start);
+    }
+
     addRecentPath(import_->rootPath());
     layout_pending_ = true;
     status_message_ = "Imported " + std::to_string(viewers_.size()) + " stream(s)";
+    if (!annotation_messages.empty()) status_message_ += "; " + annotation_messages.front();
 }
 
 void App::drawImportDialog() {

@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <fstream>
+#include <filesystem>
 #include <memory>
 #include <thread>
 
@@ -106,4 +107,42 @@ TEST(EventImportSession, TimeRangeIncludesMultipleStreams) {
     range.include(50, 600);
     EXPECT_EQ(range.start, 50);
     EXPECT_EQ(range.end, 600);
+}
+
+TEST(EventImportSession, FolderAnnotationCsvIsNotOfferedAsEvents) {
+    const auto dir = std::filesystem::temp_directory_path() /
+                     "mustard_annotation_discovery";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    std::ofstream(dir / "clip.mkv") << "";
+    std::ofstream(dir / "clip_points.csv") << "timestamp,x,y\n0,1,2\n";
+    std::ofstream(dir / "points.data") << "timestamp,x,y\n0,1,2\n";
+
+    EventImportSession session;
+    session.begin(dir.string());
+    waitForWorker(session);
+    EXPECT_EQ(session.phase(), EventImportSession::Phase::Ready);
+    auto staged = session.takeStaged();
+    ASSERT_EQ(staged.size(), 1u);
+    EXPECT_EQ(staged[0].source.kind, ImportSourceKind::Video);
+    EXPECT_EQ(std::filesystem::path(staged[0].source.path).filename(), "clip.mkv");
+    std::filesystem::remove_all(dir);
+}
+
+TEST(EventImportSession, DirectAnnotationSelectionRedirectsToData) {
+    const auto dir = std::filesystem::temp_directory_path() /
+                     "mustard_annotation_redirect";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    std::ofstream(dir / "clip.mkv") << "";
+    std::ofstream(dir / "clip_points.csv") << "timestamp,x,y\n0,1,2\n";
+
+    EventImportSession session;
+    session.begin((dir / "clip_points.csv").string());
+    waitForWorker(session);
+    EXPECT_EQ(session.phase(), EventImportSession::Phase::Ready);
+    auto staged = session.takeStaged();
+    ASSERT_EQ(staged.size(), 1u);
+    EXPECT_EQ(std::filesystem::path(staged[0].source.path).filename(), "clip.mkv");
+    std::filesystem::remove_all(dir);
 }

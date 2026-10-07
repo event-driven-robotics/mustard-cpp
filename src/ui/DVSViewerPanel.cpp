@@ -103,6 +103,7 @@ void DVSViewerPanel::draw() {
 
     // Annotation toolbar (Annotate / Stop / Save)
     ImGui::SameLine(0.f, 16.f);
+    setAnnotationImageSize(tex_w_, tex_h_);
     drawAnnotationControls();
 
     // img_origin / img_scale are set inside the texture-valid branch so that
@@ -137,7 +138,8 @@ void DVSViewerPanel::draw() {
 
         ImGui::Image(static_cast<ImTextureID>(texture_id_), ImVec2(dw, dh));
 
-        drawAnnotationInteraction(img_origin, img_scale, last_time_);
+        drawAnnotationInteraction(img_origin, img_scale,
+                                  annotationTimeUs(last_time_));
     } else if (stream_ && stream_->isOpen()) {
         ImGui::TextDisabled("Waiting for data…");
     } else {
@@ -148,7 +150,8 @@ void DVSViewerPanel::draw() {
     // Render existing annotations for the current timestamp as overlay
     // ------------------------------------------------------------------
     if (img_valid)
-        drawAnnotationOverlay(img_origin, img_scale, last_time_);
+        drawAnnotationOverlay(img_origin, img_scale,
+                              annotationTimeUs(last_time_));
 
     ImGui::End();
 }

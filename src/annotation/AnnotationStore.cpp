@@ -1,6 +1,9 @@
 // src/annotation/AnnotationStore.cpp
 #include "mustard/annotation/AnnotationStore.h"
 #include "mustard/annotation/Annotation.h"
+#include "mustard/annotation/PointAnnotation.h"
+
+#include <algorithm>
 
 #include <sstream>
 #include <string>
@@ -87,6 +90,25 @@ std::size_t AnnotationStore::totalCount() const {
         count += vec.size();
     }
     return count;
+}
+
+std::vector<const Annotation*> AnnotationStore::all() const {
+    std::vector<const Annotation*> result;
+    result.reserve(totalCount());
+    for (const auto& [t, vec] : annotations_) {
+        for (const auto& ann : vec) result.push_back(ann.get());
+    }
+    return result;
+}
+
+void AnnotationStore::removePointsAt(int64_t t) {
+    const auto it = annotations_.find(t);
+    if (it == annotations_.end()) return;
+    auto& vec = it->second;
+    vec.erase(std::remove_if(vec.begin(), vec.end(), [](const auto& ann) {
+        return dynamic_cast<const PointAnnotation*>(ann.get()) != nullptr;
+    }), vec.end());
+    if (vec.empty()) annotations_.erase(it);
 }
 
 // ---------------------------------------------------------------------------
