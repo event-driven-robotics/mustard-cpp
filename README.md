@@ -49,10 +49,14 @@ Mustard also supports annotation overlays:
 - Bounding boxes: drag directly on a viewer to create boxes
 - Eye tracking: place and edit an eye model with gaze orientation, center, and
   radius
+- Labeled point, box, and eye annotations can coexist on the same frame. While
+  annotating, click an overlay to select it, then drag its body or edit handles;
+  selected overlays are highlighted. Use Delete to remove the selection.
+- Per-viewer Undo/Redo controls are also available through Ctrl+Z and Ctrl+Y.
 - Per-panel annotation export through the `Save Annotations` control
 
-Enable `Interpolate` to preview linear values between point and eye-tracking
-keyframes, or between uniquely labeled bounding boxes. Interpolation never
+Enable `Interpolate` to preview linear values between keyframes sharing the
+same annotation type and label. Interpolation never
 extends before the first or after the last compatible keyframe. The annotation
 save dialog can also include interpolated CSV rows at a configurable FPS;
 display and save interpolation are independent settings.

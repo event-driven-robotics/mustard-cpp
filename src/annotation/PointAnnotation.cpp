@@ -23,20 +23,26 @@ void PointAnnotation::renderOverlay(ImDrawList* dl, ImVec2 origin, float scale) 
     constexpr float kScreenRadius = 5.f;
     dl->AddCircleFilled(ImVec2(origin.x + x_ * scale, origin.y + y_ * scale),
                         kScreenRadius, kColor);
+    if (!label_.empty())
+        dl->AddText(ImVec2(origin.x + x_ * scale + 7.f, origin.y + y_ * scale - 7.f),
+                    kColor, label_.c_str());
 }
 
 std::string PointAnnotation::serialize() const {
     std::ostringstream out;
     out << std::setprecision(9) << "Point t=" << t_ << " x=" << x_
-        << " y=" << y_ << '\n';
+        << " y=" << y_ << " label=" << label_ << '\n';
     return out.str();
 }
 
 std::unique_ptr<PointAnnotation> PointAnnotation::deserialize(const std::string& s) {
     try {
-        return std::make_unique<PointAnnotation>(
-            std::stoll(field(s, "t")), std::stof(field(s, "x")),
-            std::stof(field(s, "y")));
+        std::string label;
+        const auto pos = s.find(" label=");
+        if (pos != std::string::npos) label = s.substr(pos + 7);
+        while (!label.empty() && (label.back() == '\n' || label.back() == '\r')) label.pop_back();
+        return std::make_unique<PointAnnotation>(std::stoll(field(s, "t")),
+            std::stof(field(s, "x")), std::stof(field(s, "y")), std::move(label));
     } catch (...) {
         return nullptr;
     }

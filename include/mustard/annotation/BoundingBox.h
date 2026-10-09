@@ -37,7 +37,7 @@ public:
     float              y()     const noexcept { return y_; }
     float              w()     const noexcept { return w_; }
     float              h()     const noexcept { return h_; }
-    const std::string& label() const noexcept { return label_; }
+    const std::string& label() const noexcept override { return label_; }
 
     // ------------------------------------------------------------------
     // Type-specific deserialisation

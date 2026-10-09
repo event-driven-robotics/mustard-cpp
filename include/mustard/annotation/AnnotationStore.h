@@ -29,6 +29,14 @@ public:
     /// The map entry is erased when its bucket becomes empty.
     void remove(int64_t t, std::size_t index);
 
+    /// Locate an annotation by its stable UI identity within a timestamp.
+    std::size_t findIndex(int64_t t, const std::string& type,
+                          const std::string& label) const;
+    bool contains(int64_t t, const std::string& type,
+                  const std::string& label) const;
+    bool replace(int64_t t, const std::string& type, const std::string& label,
+                 std::unique_ptr<Annotation> replacement);
+
     /// Remove all annotations.
     void clear();
 
@@ -69,6 +77,10 @@ public:
     /// Returns false and leaves the store partially populated on any parse
     /// error; call clear() first if you want a clean load.
     bool deserialize(const std::string& s);
+
+    /// Deep, value-based state used by per-panel undo/redo.
+    std::string snapshot() const { return serialize(); }
+    bool restore(const std::string& state);
 
 private:
     std::map<int64_t, std::vector<std::unique_ptr<Annotation>>> annotations_;

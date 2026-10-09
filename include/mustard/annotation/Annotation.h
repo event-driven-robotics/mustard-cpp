@@ -35,6 +35,11 @@ public:
     /// Stable string tag, e.g. "BoundingBox".
     virtual std::string typeName()          const noexcept = 0;
 
+    virtual const std::string& label() const noexcept {
+        static const std::string empty;
+        return empty;
+    }
+
     /// Factory: parse a serialised line produced by any known Annotation
     /// subclass.  Returns nullptr if the type tag is unrecognised or
     /// parsing fails.

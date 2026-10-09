@@ -41,8 +41,8 @@ double amountBetween(int64_t t, int64_t left, int64_t right) {
 
 std::vector<std::unique_ptr<Annotation>> interpolateAnnotationsAt(
     const AnnotationStore& store, int64_t t) {
-    Keyframes<PointAnnotation> points;
-    Keyframes<EyeTracking> eyes;
+    std::map<std::string, Keyframes<PointAnnotation>> points;
+    std::map<std::string, Keyframes<EyeTracking>> eyes;
     std::map<std::string, Keyframes<BoundingBox>> boxes;
     std::map<AnnotationKind, std::set<int64_t>> endpoints;
 
@@ -50,26 +50,28 @@ std::vector<std::unique_ptr<Annotation>> interpolateAnnotationsAt(
         if (const auto* endpoint = dynamic_cast<const InterpolationEndpoint*>(ann))
             endpoints[endpoint->kind()].insert(endpoint->timestamp());
         else if (const auto* point = dynamic_cast<const PointAnnotation*>(ann))
-            points[point->timestamp()].push_back(point);
+            points[point->label()][point->timestamp()].push_back(point);
         else if (const auto* eye = dynamic_cast<const EyeTracking*>(ann))
-            eyes[eye->timestamp()].push_back(eye);
-        else if (const auto* box = dynamic_cast<const BoundingBox*>(ann);
-                 box && !box->label().empty())
+            eyes[eye->label()][eye->timestamp()].push_back(eye);
+        else if (const auto* box = dynamic_cast<const BoundingBox*>(ann))
             boxes[box->label()][box->timestamp()].push_back(box);
     }
 
     std::vector<std::unique_ptr<Annotation>> result;
-    if (const auto [left, right] = surrounding(points, t); left && right) {
+    for (const auto& [label, frames] : points) {
+      if (const auto [left, right] = surrounding(frames, t); left && right) {
         const auto boundary = endpoints[AnnotationKind::kPoint].upper_bound(left->timestamp());
         if (boundary == endpoints[AnnotationKind::kPoint].end() ||
             *boundary >= right->timestamp()) {
             const double amount = amountBetween(t, left->timestamp(), right->timestamp());
             result.push_back(std::make_unique<PointAnnotation>(
                 t, lerp(left->x(), right->x(), amount),
-                lerp(left->y(), right->y(), amount)));
+                lerp(left->y(), right->y(), amount), label));
         }
+      }
     }
-    if (const auto [left, right] = surrounding(eyes, t); left && right) {
+    for (const auto& [label, frames] : eyes) {
+      if (const auto [left, right] = surrounding(frames, t); left && right) {
         const auto boundary = endpoints[AnnotationKind::kEyeTracking].upper_bound(
             left->timestamp());
         if (boundary == endpoints[AnnotationKind::kEyeTracking].end() ||
@@ -80,8 +82,9 @@ std::vector<std::unique_ptr<Annotation>> interpolateAnnotationsAt(
                 lerp(left->theta(), right->theta(), amount),
                 lerp(left->centerX(), right->centerX(), amount),
                 lerp(left->centerY(), right->centerY(), amount),
-                lerp(left->radius(), right->radius(), amount)));
+                lerp(left->radius(), right->radius(), amount), label));
         }
+      }
     }
     for (const auto& [label, frames] : boxes) {
         const auto [left, right] = surrounding(frames, t);

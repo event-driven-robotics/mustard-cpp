@@ -141,12 +141,12 @@ TEST(AnnotationCsvTest, SavesInterpolatedRowsAtRequestedFpsWithoutDuplicates) {
     ASSERT_TRUE(saveAnnotationCsvFiles(dir.path.string(), "clip", store, false,
                                        written, error, settings)) << error;
     EXPECT_EQ(read(dir.path / "clip_points.csv"),
-              "timestamp,x,y\n"
-              "0,0,0\n"
-              "250000,2.5,5\n"
-              "500000,5,10\n"
-              "750000,7.5,15\n"
-              "1000000,10,20\n");
+              "timestamp,x,y,label\n"
+              "0,0,0,\n"
+              "250000,2.5,5,\n"
+              "500000,5,10,\n"
+              "750000,7.5,15,\n"
+              "1000000,10,20,\n");
 
     AnnotationStore restored;
     ASSERT_TRUE(loadAnnotationCsv((dir.path / "clip_points.csv").string(),
@@ -164,7 +164,7 @@ TEST(AnnotationCsvTest, KeyframeOnlySaveRemainsUnchanged) {
     ASSERT_TRUE(saveAnnotationCsvFiles(dir.path.string(), "clip", store, false,
                                        written, error)) << error;
     EXPECT_EQ(read(dir.path / "clip_points.csv"),
-              "timestamp,x,y\n0,1,2\n1000000,3,4\n");
+              "timestamp,x,y,label\n0,1,2,\n1000000,3,4,\n");
 }
 
 TEST(AnnotationCsvTest, InterpolationEndpointsRoundTripAsEmptyRows) {
@@ -178,9 +178,9 @@ TEST(AnnotationCsvTest, InterpolationEndpointsRoundTripAsEmptyRows) {
     ASSERT_TRUE(saveAnnotationCsvFiles(dir.path.string(), "clip", store, false,
                                        written, error)) << error;
     EXPECT_EQ(read(dir.path / "clip_points.csv"),
-              "timestamp,x,y\n100,,\n");
+              "timestamp,x,y,label\n100,,,\n");
     EXPECT_EQ(read(dir.path / "clip_eye_tracking.csv"),
-              "timestamp,phi,theta,center_x,center_y,radius\n200,,,,,\n");
+              "timestamp,phi,theta,center_x,center_y,radius,label\n200,,,,,,\n");
     EXPECT_EQ(read(dir.path / "clip_bounding_boxes.csv"),
               "timestamp,x,y,w,h,label\n300,,,,,\n");
 
@@ -254,4 +254,22 @@ TEST(AnnotationCsvTest, DirectSelectionResolvesSpecificAndFolderLevelNames) {
     EXPECT_FALSE(resolveDirectAnnotationSelection(
         (dir.path / "experiment_points.csv").string(), target, error));
     EXPECT_TRUE(error.empty());
+}
+
+TEST(AnnotationCsvTest, LabeledPointAndEyeSchemasRoundTrip) {
+    TempDir dir;
+    AnnotationStore store;
+    store.add(std::make_unique<PointAnnotation>(10, 1.f, 2.f, "p, one"));
+    store.add(std::make_unique<EyeTracking>(20, .1f, .2f, 3.f, 4.f, 2.f, "left eye"));
+    std::vector<std::string> written;
+    std::string error;
+    ASSERT_TRUE(saveAnnotationCsvFiles(dir.path.string(), "clip", store, false,
+                                       written, error)) << error;
+    AnnotationStore restored;
+    ASSERT_TRUE(loadAnnotationCsv((dir.path / "clip_points.csv").string(), restored,
+                                  20, 20, error)) << error;
+    ASSERT_TRUE(loadAnnotationCsv((dir.path / "clip_eye_tracking.csv").string(), restored,
+                                  20, 20, error)) << error;
+    EXPECT_TRUE(restored.contains(10, "Point", "p, one"));
+    EXPECT_TRUE(restored.contains(20, "EyeTracking", "left eye"));
 }

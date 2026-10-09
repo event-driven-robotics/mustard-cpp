@@ -85,8 +85,14 @@ bool identify(const std::string& header, AnnotationCsvType& type,
     if (header == "timestamp,x,y") {
         type = AnnotationCsvType::kPoints; columns = 3; return true;
     }
+    if (header == "timestamp,x,y,label") {
+        type = AnnotationCsvType::kPoints; columns = 4; return true;
+    }
     if (header == "timestamp,phi,theta,center_x,center_y,radius") {
         type = AnnotationCsvType::kEyeTracking; columns = 6; return true;
+    }
+    if (header == "timestamp,phi,theta,center_x,center_y,radius,label") {
+        type = AnnotationCsvType::kEyeTracking; columns = 7; return true;
     }
     if (header == "timestamp,x,y,w,h,label") {
         type = AnnotationCsvType::kBoundingBoxes; columns = 6; return true;
@@ -134,7 +140,8 @@ bool parseFile(const std::string& path, int width, int height, Parsed& parsed,
                 error = "Invalid point at row " + std::to_string(row);
                 return false;
             }
-            parsed.push_back(std::make_unique<PointAnnotation>(t, x, y));
+            parsed.push_back(std::make_unique<PointAnnotation>(
+                t, x, y, expected == 4 ? f[3] : std::string{}));
         } else if (type == AnnotationCsvType::kEyeTracking) {
             if (f[1].empty() && f[2].empty() && f[3].empty() &&
                 f[4].empty() && f[5].empty()) {
@@ -151,7 +158,9 @@ bool parseFile(const std::string& path, int width, int height, Parsed& parsed,
                         std::to_string(row);
                 return false;
             }
-            parsed.push_back(std::make_unique<EyeTracking>(t, phi, theta, x, y, radius));
+            parsed.push_back(std::make_unique<EyeTracking>(
+                t, phi, theta, x, y, radius,
+                expected == 7 ? f[6] : std::string{}));
         } else {
             if (f[1].empty() && f[2].empty() && f[3].empty() &&
                 f[4].empty() && f[5].empty()) {
@@ -223,8 +232,6 @@ bool loadAnnotationCsv(const std::string& path, AnnotationStore& store,
             store.setInterpolationEndpoint(endpoint->timestamp(), endpoint->kind());
             continue;
         }
-        if (dynamic_cast<PointAnnotation*>(ann.get()))
-            store.removePointsAt(ann->timestamp());
         store.add(std::move(ann));
     }
     return true;
@@ -240,8 +247,8 @@ bool saveAnnotationCsvFiles(const std::string& directory,
     written.clear();
     if (video_stem.empty()) { error = "Video stem is empty"; return false; }
     struct Output { std::string token, header; std::vector<const Annotation*> rows; };
-    Output points{"points", "timestamp,x,y"};
-    Output eyes{"eye_tracking", "timestamp,phi,theta,center_x,center_y,radius"};
+    Output points{"points", "timestamp,x,y,label"};
+    Output eyes{"eye_tracking", "timestamp,phi,theta,center_x,center_y,radius,label"};
     Output boxes{"bounding_boxes", "timestamp,x,y,w,h,label"};
     const auto authored = store.all();
     std::vector<std::unique_ptr<Annotation>> generated;
@@ -309,15 +316,16 @@ bool saveAnnotationCsvFiles(const std::string& directory,
             if (const auto* endpoint =
                     dynamic_cast<const InterpolationEndpoint*>(ann)) {
                 out << endpoint->timestamp();
-                const int blanks = endpoint->kind() == AnnotationKind::kPoint ? 2 : 5;
+                const int blanks = output == &points ? 3 : (output == &eyes ? 6 : 5);
                 for (int i = 0; i < blanks; ++i) out << ',';
                 out << '\n';
             } else if (const auto* p = dynamic_cast<const PointAnnotation*>(ann))
-                out << p->timestamp() << ',' << p->x() << ',' << p->y() << '\n';
+                out << p->timestamp() << ',' << p->x() << ',' << p->y() << ','
+                    << csvQuote(p->label()) << '\n';
             else if (const auto* e = dynamic_cast<const EyeTracking*>(ann))
                 out << e->timestamp() << ',' << e->phi() << ',' << e->theta()
                     << ',' << e->centerX() << ',' << e->centerY() << ','
-                    << e->radius() << '\n';
+                    << e->radius() << ',' << csvQuote(e->label()) << '\n';
             else if (const auto* b = dynamic_cast<const BoundingBox*>(ann))
                 out << b->timestamp() << ',' << b->x() << ',' << b->y()
                     << ',' << b->w() << ',' << b->h() << ','

@@ -107,8 +107,8 @@ TEST(AnnotationStoreTest, RemoveAnnotation) {
 
 TEST(AnnotationStoreTest, TotalCount) {
     AnnotationStore store;
-    store.add(makeBox(0));
-    store.add(makeBox(0));   // two at t=0
+    store.add(makeBox(0, 0, 0, 10, 20, "a"));
+    store.add(makeBox(0, 0, 0, 10, 20, "b")); // two tracks at t=0
     store.add(makeBox(500)); // one at t=500
 
     EXPECT_EQ(store.totalCount(), 3u);
@@ -340,14 +340,15 @@ TEST(AnnotationInterpolationTest, DoesNotExtrapolateOrReplaceExactKeyframes) {
     EXPECT_EQ(store.queryExact(150), nullptr);
 }
 
-TEST(AnnotationInterpolationTest, RequiresUniqueNonEmptyBoundingBoxLabels) {
+TEST(AnnotationInterpolationTest, DuplicateIdentityReplacesAndBlankLegacyTrackInterpolates) {
     AnnotationStore store;
     store.add(std::make_unique<BoundingBox>(0, 0, 0, 1, 1, "car"));
     store.add(std::make_unique<BoundingBox>(0, 5, 5, 1, 1, "car"));
     store.add(std::make_unique<BoundingBox>(100, 10, 10, 1, 1, "car"));
     store.add(std::make_unique<BoundingBox>(0, 0, 0, 1, 1, ""));
     store.add(std::make_unique<BoundingBox>(100, 10, 10, 1, 1, ""));
-    EXPECT_TRUE(interpolateAnnotationsAt(store, 50).empty());
+    const auto values = interpolateAnnotationsAt(store, 50);
+    ASSERT_EQ(values.size(), 2u);
 }
 
 TEST(AnnotationInterpolationTest, EndpointBlocksOnlyItsAnnotationType) {
@@ -376,4 +377,43 @@ TEST(AnnotationInterpolationTest, AuthoredValueReplacesEndpointAtSameTime) {
     ASSERT_NE(annotations, nullptr);
     ASSERT_EQ(annotations->size(), 1u);
     EXPECT_NE(dynamic_cast<const PointAnnotation*>((*annotations)[0].get()), nullptr);
+}
+
+TEST(AnnotationStoreTest, SameTypeAndTimeCoexistByDistinctLabel) {
+    AnnotationStore store;
+    store.add(std::make_unique<PointAnnotation>(100, 1.f, 2.f, "left"));
+    store.add(std::make_unique<PointAnnotation>(100, 3.f, 4.f, "right"));
+    ASSERT_EQ(store.totalCount(), 2u);
+    EXPECT_TRUE(store.contains(100, "Point", "left"));
+    EXPECT_TRUE(store.contains(100, "Point", "right"));
+
+    store.add(std::make_unique<PointAnnotation>(100, 8.f, 9.f, "left"));
+    ASSERT_EQ(store.totalCount(), 2u);
+    const auto* bucket = store.queryExact(100);
+    ASSERT_NE(bucket, nullptr);
+    const auto index = store.findIndex(100, "Point", "left");
+    ASSERT_LT(index, bucket->size());
+    EXPECT_FLOAT_EQ(dynamic_cast<const PointAnnotation*>((*bucket)[index].get())->x(), 8.f);
+}
+
+TEST(AnnotationStoreTest, SnapshotRestoreIsDeepAndPreservesLabels) {
+    AnnotationStore store;
+    store.add(std::make_unique<EyeTracking>(100, .1f, .2f, 3.f, 4.f, 5.f, "eye a"));
+    const std::string snapshot = store.snapshot();
+    store.add(std::make_unique<BoundingBox>(200, 1.f, 2.f, 3.f, 4.f, "box"));
+    ASSERT_TRUE(store.restore(snapshot));
+    EXPECT_EQ(store.totalCount(), 1u);
+    EXPECT_TRUE(store.contains(100, "EyeTracking", "eye a"));
+}
+
+TEST(AnnotationInterpolationTest, InterpolatesEachPointLabelIndependently) {
+    AnnotationStore store;
+    store.add(std::make_unique<PointAnnotation>(0, 0.f, 0.f, "a"));
+    store.add(std::make_unique<PointAnnotation>(100, 10.f, 20.f, "a"));
+    store.add(std::make_unique<PointAnnotation>(0, 20.f, 30.f, "b"));
+    store.add(std::make_unique<PointAnnotation>(100, 40.f, 50.f, "b"));
+    const auto values = interpolateAnnotationsAt(store, 50);
+    ASSERT_EQ(values.size(), 2u);
+    EXPECT_EQ(values[0]->label(), "a");
+    EXPECT_EQ(values[1]->label(), "b");
 }

@@ -452,6 +452,8 @@ void App::commitImport() {
             // but queries for absolute-timestamp recordings were all beyond
             // the end of the stream.
             panel->setStartOffset(item.stream->startTime());
+            panel->setTimelineSeekCallback(
+                [controller = time_ctrl_](int64_t t) { controller->seekTo(t); });
             panel->setEventTheme(event_theme_);
             load_annotations(*panel, item.source.path,
                              item.stream->sensorWidth(), item.stream->sensorHeight());
@@ -459,6 +461,8 @@ void App::commitImport() {
         } else if (item.source.kind == ImportSourceKind::Video) {
             auto panel = std::make_unique<RGBVideoPanel>(item.source.path, label);
             if (panel->isLoaded()) {
+                panel->setTimelineSeekCallback(
+                    [controller = time_ctrl_](int64_t t) { controller->seekTo(t); });
                 panel->setAnnotationFileStem(
                     std::filesystem::path(item.source.path).stem().string());
                 load_annotations(*panel, item.source.path,
@@ -468,6 +472,8 @@ void App::commitImport() {
         } else if (item.source.kind == ImportSourceKind::Images) {
             auto panel = std::make_unique<ImageListPanel>(item.source.path, label);
             if (panel->isLoaded()) {
+                panel->setTimelineSeekCallback(
+                    [controller = time_ctrl_](int64_t t) { controller->seekTo(t); });
                 panel->setAnnotationFileStem(
                     std::filesystem::path(item.source.path).stem().string());
                 load_annotations(*panel, item.source.path,

@@ -13,9 +13,13 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <cstring>
+#include <set>
+#include <map>
+#include <optional>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -62,37 +66,51 @@ void update_eye_orientation(float& phi, float& theta,
     theta = std::asin(sin_theta);
 }
 
-struct EyeTrackingAnnotationRef {
-    int64_t timestamp{0};
-    std::size_t index{0};
-    const EyeTracking* eye{nullptr};
-};
-
-std::vector<EyeTrackingAnnotationRef>
-find_eye_tracking_annotations_in_bin(const AnnotationStore& store, int64_t t) {
-    std::vector<EyeTrackingAnnotationRef> refs;
-    const auto* anns = store.queryAt(t);
-    if (!anns) return refs;
-
-    for (std::size_t i = 0; i < anns->size(); ++i) {
-        const auto* eye = dynamic_cast<const EyeTracking*>((*anns)[i].get());
-        if (!eye) continue;
-        refs.push_back(EyeTrackingAnnotationRef{eye->timestamp(), i, eye});
-    }
-    return refs;
+std::string type_name(AnnotationType type) {
+    if (type == AnnotationType::kPoint) return "Point";
+    if (type == AnnotationType::kEyeTracking) return "EyeTracking";
+    return "BoundingBox";
 }
 
-EyeTrackingAnnotationRef
-find_eye_tracking_annotation_in_bin(const AnnotationStore& store, int64_t t) {
-    const auto refs = find_eye_tracking_annotations_in_bin(store, t);
-    return refs.empty() ? EyeTrackingAnnotationRef{} : refs.front();
+std::unique_ptr<Annotation> relabeled(const Annotation& ann, std::string label) {
+    if (const auto* p = dynamic_cast<const PointAnnotation*>(&ann))
+        return std::make_unique<PointAnnotation>(p->timestamp(), p->x(), p->y(), std::move(label));
+    if (const auto* e = dynamic_cast<const EyeTracking*>(&ann))
+        return std::make_unique<EyeTracking>(e->timestamp(), e->phi(), e->theta(),
+            e->centerX(), e->centerY(), e->radius(), std::move(label));
+    if (const auto* b = dynamic_cast<const BoundingBox*>(&ann))
+        return std::make_unique<BoundingBox>(b->timestamp(), b->x(), b->y(),
+            b->w(), b->h(), std::move(label));
+    return nullptr;
 }
 
-void remove_eye_tracking_annotations_in_bin(AnnotationStore& store, int64_t t) {
-    const auto refs = find_eye_tracking_annotations_in_bin(store, t);
-    for (auto it = refs.rbegin(); it != refs.rend(); ++it) {
-        store.remove(it->timestamp, it->index);
+std::optional<int64_t> first_changed_annotation_time(const std::string& before,
+                                                     const std::string& after) {
+    using Rows = std::map<int64_t, std::multiset<std::string>>;
+    const auto parse = [](const std::string& state) {
+        Rows rows;
+        std::istringstream input(state);
+        std::string line;
+        while (std::getline(input, line)) {
+            if (line.empty()) continue;
+            if (auto annotation = Annotation::deserialize(line))
+                rows[annotation->timestamp()].insert(line);
+        }
+        return rows;
+    };
+    const Rows left = parse(before);
+    const Rows right = parse(after);
+    auto a = left.begin();
+    auto b = right.begin();
+    while (a != left.end() || b != right.end()) {
+        if (b == right.end() || (a != left.end() && a->first < b->first))
+            return a->first;
+        if (a == left.end() || b->first < a->first) return b->first;
+        if (a->second != b->second) return a->first;
+        ++a;
+        ++b;
     }
+    return std::nullopt;
 }
 
 } // namespace
@@ -106,10 +124,61 @@ ViewerPanel& ViewerPanel::operator=(ViewerPanel&&) = default;
 
 void ViewerPanel::setAnnotationStore(std::shared_ptr<AnnotationStore> store) {
     ann_store_ = std::move(store);
+    undo_history_.clear();
+    redo_history_.clear();
+    clearAnnotationSelection();
+}
+
+void ViewerPanel::clearAnnotationSelection() {
+    selected_ = {};
+    dragging_ = false;
+    annotation_drag_mode_ = AnnotationDragMode::kNone;
+}
+
+void ViewerPanel::pushAnnotationHistory(const std::string& before) {
+    if (!ann_store_) return;
+    const std::string after = ann_store_->snapshot();
+    if (before == after) return;
+    undo_history_.push_back({before, first_changed_annotation_time(before, after)});
+    if (undo_history_.size() > 100) undo_history_.erase(undo_history_.begin());
+    redo_history_.clear();
+}
+
+void ViewerPanel::undoAnnotation() {
+    if (!ann_store_ || undo_history_.empty()) return;
+    AnnotationHistoryEntry entry = std::move(undo_history_.back());
+    undo_history_.pop_back();
+    redo_history_.push_back({ann_store_->snapshot(), entry.affected_time_us});
+    ann_store_->restore(entry.state);
+    clearAnnotationSelection();
+    if (entry.affected_time_us && *entry.affected_time_us != current_annotation_time_us_ &&
+        timeline_seek_callback_)
+        timeline_seek_callback_(*entry.affected_time_us + start_offset_us_);
+    export_status_ = "Annotation edit undone";
+}
+
+void ViewerPanel::redoAnnotation() {
+    if (!ann_store_ || redo_history_.empty()) return;
+    AnnotationHistoryEntry entry = std::move(redo_history_.back());
+    redo_history_.pop_back();
+    undo_history_.push_back({ann_store_->snapshot(), entry.affected_time_us});
+    ann_store_->restore(entry.state);
+    clearAnnotationSelection();
+    if (entry.affected_time_us && *entry.affected_time_us != current_annotation_time_us_ &&
+        timeline_seek_callback_)
+        timeline_seek_callback_(*entry.affected_time_us + start_offset_us_);
+    export_status_ = "Annotation edit redone";
 }
 
 void ViewerPanel::drawAnnotationControls(int64_t annotation_time_us) {
     advanceVideoExport();
+    current_annotation_time_us_ = annotation_time_us;
+    const ImGuiIO& shortcut_io = ImGui::GetIO();
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+        !ImGui::IsAnyItemActive() && shortcut_io.KeyCtrl) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Z, false)) undoAnnotation();
+        if (ImGui::IsKeyPressed(ImGuiKey_Y, false)) redoAnnotation();
+    }
     if (!annotating_) {
         if (ImGui::Button("Annotate")) {
             ImGui::OpenPopup("##ann_type");
@@ -118,14 +187,17 @@ void ViewerPanel::drawAnnotationControls(int64_t annotation_time_us) {
             ImGui::TextUnformatted("Annotation type:");
             ImGui::Separator();
             if (ImGui::Selectable("Bounding Box")) {
+                clearAnnotationSelection();
                 annotation_type_ = AnnotationType::kBoundingBox;
                 annotating_      = true;
             }
             if (ImGui::Selectable("Eye Tracking")) {
+                clearAnnotationSelection();
                 annotation_type_ = AnnotationType::kEyeTracking;
                 annotating_      = true;
             }
             if (ImGui::Selectable("Point")) {
+                clearAnnotationSelection();
                 annotation_type_ = AnnotationType::kPoint;
                 annotating_ = true;
             }
@@ -134,6 +206,46 @@ void ViewerPanel::drawAnnotationControls(int64_t annotation_time_us) {
     } else {
         if (ImGui::Button("Stop")) {
             annotating_ = false;
+            clearAnnotationSelection();
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(150.f);
+        ImGui::InputText("Label", annotation_label_.data(), annotation_label_.size());
+        if (selected_.active && ImGui::IsItemDeactivatedAfterEdit() && ann_store_) {
+            const std::string new_label(annotation_label_.data());
+            const auto* bucket = ann_store_->queryExact(selected_.timestamp);
+            const std::size_t index = ann_store_->findIndex(selected_.timestamp,
+                selected_.type, selected_.label);
+            if (new_label.empty() && !selected_.label.empty()) {
+                export_status_ = "Annotation labels cannot be empty";
+                std::snprintf(annotation_label_.data(), annotation_label_.size(), "%s",
+                              selected_.label.c_str());
+            } else if (new_label != selected_.label &&
+                ann_store_->contains(selected_.timestamp, selected_.type, new_label)) {
+                export_status_ = "That label already exists for this type and time";
+                std::snprintf(annotation_label_.data(), annotation_label_.size(), "%s",
+                              selected_.label.c_str());
+            } else if (bucket && index < bucket->size()) {
+                const std::string before = ann_store_->snapshot();
+                auto replacement = relabeled(*(*bucket)[index], new_label);
+                if (ann_store_->replace(selected_.timestamp, selected_.type,
+                                        selected_.label, std::move(replacement))) {
+                    selected_.label = new_label;
+                    pushAnnotationHistory(before);
+                }
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::BeginCombo("##label_suggestions", "Suggestions")) {
+            std::set<std::string> labels;
+            if (ann_store_) for (const Annotation* ann : ann_store_->all())
+                if (ann->typeName() == type_name(annotation_type_) && !ann->label().empty())
+                    labels.insert(ann->label());
+            for (const auto& candidate : labels)
+                if (ImGui::Selectable(candidate.c_str()))
+                    std::snprintf(annotation_label_.data(), annotation_label_.size(), "%s",
+                                  candidate.c_str());
+            ImGui::EndCombo();
         }
         ImGui::SameLine();
         if (annotation_time_us < 0) ImGui::BeginDisabled();
@@ -143,10 +255,34 @@ void ViewerPanel::drawAnnotationControls(int64_t annotation_time_us) {
                 kind = AnnotationKind::kPoint;
             else if (annotation_type_ == AnnotationType::kEyeTracking)
                 kind = AnnotationKind::kEyeTracking;
+            const std::string before = ann_store_->snapshot();
             ann_store_->setInterpolationEndpoint(annotation_time_us, kind);
+            pushAnnotationHistory(before);
             export_status_ = "Marked annotation endpoint";
         }
         if (annotation_time_us < 0) ImGui::EndDisabled();
+    }
+
+    ImGui::SameLine();
+    if (undo_history_.empty()) ImGui::BeginDisabled();
+    if (ImGui::Button("Undo")) undoAnnotation();
+    if (undo_history_.empty()) ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (redo_history_.empty()) ImGui::BeginDisabled();
+    if (ImGui::Button("Redo")) redoAnnotation();
+    if (redo_history_.empty()) ImGui::EndDisabled();
+    if (annotating_) {
+        ImGui::SameLine();
+        if (!selected_.active) ImGui::BeginDisabled();
+        if (ImGui::Button("Delete Annotation") && ann_store_ && selected_.active) {
+            const std::string before = ann_store_->snapshot();
+            const std::size_t index = ann_store_->findIndex(selected_.timestamp,
+                selected_.type, selected_.label);
+            ann_store_->remove(selected_.timestamp, index);
+            pushAnnotationHistory(before);
+            clearAnnotationSelection();
+        }
+        if (!selected_.active) ImGui::EndDisabled();
     }
 
     ImGui::SameLine();
@@ -245,11 +381,14 @@ void ViewerPanel::drawAnnotationControls(int64_t annotation_time_us) {
             ImGuiWindowFlags_NoCollapse, ImVec2(600.f, 400.f))) {
         if (ImGuiFileDialog::Instance()->IsOk() && ann_store_) {
             std::string error;
+            const std::string before = ann_store_->snapshot();
             if (loadAnnotationCsv(ImGuiFileDialog::Instance()->GetFilePathName(),
                                   *ann_store_, annotation_image_width_,
-                                  annotation_image_height_, error))
+                                  annotation_image_height_, error)) {
                 export_status_ = "Annotations loaded";
-            else
+                pushAnnotationHistory(before);
+                clearAnnotationSelection();
+            } else
                 export_status_ = error;
         }
         ImGuiFileDialog::Instance()->Close();
@@ -419,156 +558,238 @@ void ViewerPanel::drawAnnotationInteraction(ImVec2 img_origin, float scale, int6
         dragging_ = false;
         return;
     }
+    if (scale <= 0.f) return;
 
-    if (annotation_type_ == AnnotationType::kPoint) {
-        if (scale > 0.f && ImGui::IsItemHovered() && ImGui::IsMouseClicked(0)) {
-            const ImVec2 p = screen_to_sensor(ImGui::GetMousePos(), img_origin, scale);
-            const auto nearby = ann_store_->queryRange(t - 20'000, t + 20'001);
-            const PointAnnotation* closest = nullptr;
-            int64_t closest_delta = 20'001;
-            for (const Annotation* ann : nearby) {
-                const auto* point = dynamic_cast<const PointAnnotation*>(ann);
-                if (!point) continue;
-                const int64_t delta = std::llabs(point->timestamp() - t);
-                if (delta < closest_delta) { closest = point; closest_delta = delta; }
+    const ImVec2 mouse = ImGui::GetMousePos();
+    const ImVec2 sensor = screen_to_sensor(mouse, img_origin, scale);
+    const Annotation* hit = nullptr;
+    bool hit_interpolated = false;
+    std::vector<std::unique_ptr<Annotation>> interpolated;
+    const auto* visible = interpolation_enabled_ ? ann_store_->queryExact(t)
+                                                  : ann_store_->queryAt(t);
+    if (selected_.active) {
+        bool still_visible = false;
+        if (visible) for (const auto& item : *visible)
+            if (item->timestamp() == selected_.timestamp &&
+                item->typeName() == selected_.type && item->label() == selected_.label) {
+                still_visible = true; break;
             }
-            if (closest) ann_store_->removePointsAt(closest->timestamp());
-            ann_store_->removePointsAt(t);
-            ann_store_->add(std::make_unique<PointAnnotation>(t, p.x, p.y));
+        if (!still_visible) clearAnnotationSelection();
+    }
+    auto hit_test = [&](const Annotation* ann) {
+        if (const auto* p = dynamic_cast<const PointAnnotation*>(ann))
+            return distance(mouse, ImVec2(img_origin.x + p->x() * scale,
+                img_origin.y + p->y() * scale)) <= 10.f;
+        if (const auto* b = dynamic_cast<const BoundingBox*>(ann))
+            return sensor.x >= b->x() && sensor.y >= b->y() &&
+                   sensor.x <= b->x() + b->w() && sensor.y <= b->y() + b->h();
+        if (const auto* e = dynamic_cast<const EyeTracking*>(ann))
+            return distance(sensor, ImVec2(e->centerX(), e->centerY())) <= e->radius();
+        return false;
+    };
+    const auto hit_area = [](const Annotation* ann) {
+        if (dynamic_cast<const PointAnnotation*>(ann)) return 1.f;
+        if (const auto* b = dynamic_cast<const BoundingBox*>(ann)) return b->w() * b->h();
+        if (const auto* e = dynamic_cast<const EyeTracking*>(ann)) return e->radius() * e->radius();
+        return 1e30f;
+    };
+    float best_area = 1e30f;
+    if (visible) for (auto it = visible->rbegin(); it != visible->rend(); ++it)
+        if (hit_test(it->get()) && hit_area(it->get()) < best_area) {
+            hit = it->get(); best_area = hit_area(hit);
         }
+    if (!hit && interpolation_enabled_) {
+        interpolated = interpolateAnnotationsAt(*ann_store_, t);
+        for (auto it = interpolated.rbegin(); it != interpolated.rend(); ++it)
+            if (hit_test(it->get()) && hit_area(it->get()) < best_area) {
+                hit = it->get(); best_area = hit_area(hit); hit_interpolated = true;
+            }
+    }
+
+    if (selected_.active && ImGui::IsWindowFocused() && !ImGui::IsAnyItemActive() &&
+        ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
+        const std::string before = ann_store_->snapshot();
+        ann_store_->remove(selected_.timestamp, ann_store_->findIndex(
+            selected_.timestamp, selected_.type, selected_.label));
+        pushAnnotationHistory(before);
+        clearAnnotationSelection();
         return;
     }
 
-    if (annotation_type_ == AnnotationType::kBoundingBox) {
-        if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(0)) {
-            drag_start_ = ImGui::GetMousePos();
-            dragging_   = true;
-        }
-
-        if (dragging_ && ImGui::IsMouseDown(0)) {
-            const ImVec2 cur = ImGui::GetMousePos();
-            ImGui::GetWindowDrawList()->AddRect(
-                drag_start_, cur, IM_COL32(255, 200, 0, 180));
-        }
-
-        if (dragging_ && ImGui::IsMouseReleased(0)) {
-            const ImVec2 cur = ImGui::GetMousePos();
-            if (scale > 0.f) {
-                const float x0 = std::min(drag_start_.x, cur.x);
-                const float y0 = std::min(drag_start_.y, cur.y);
-                const float x1 = std::max(drag_start_.x, cur.x);
-                const float y1 = std::max(drag_start_.y, cur.y);
-                const float bx = (x0 - img_origin.x) / scale;
-                const float by = (y0 - img_origin.y) / scale;
-                const float bw = (x1 - x0)           / scale;
-                const float bh = (y1 - y0)           / scale;
-                ann_store_->add(std::make_unique<BoundingBox>(t, bx, by, bw, bh));
+    if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(0)) {
+        drag_start_ = mouse;
+        if (hit) {
+            if (hit_interpolated) {
+                const std::string before = ann_store_->snapshot();
+                if (const auto* p = dynamic_cast<const PointAnnotation*>(hit))
+                    ann_store_->add(std::make_unique<PointAnnotation>(t, p->x(), p->y(), p->label()));
+                else if (const auto* b = dynamic_cast<const BoundingBox*>(hit))
+                    ann_store_->add(std::make_unique<BoundingBox>(t, b->x(), b->y(), b->w(), b->h(), b->label()));
+                else if (const auto* e = dynamic_cast<const EyeTracking*>(hit))
+                    ann_store_->add(std::make_unique<EyeTracking>(t, e->phi(), e->theta(), e->centerX(), e->centerY(), e->radius(), e->label()));
+                pushAnnotationHistory(before);
+                visible = ann_store_->queryExact(t);
+                const std::size_t idx = ann_store_->findIndex(t, hit->typeName(), hit->label());
+                hit = visible && idx < visible->size() ? (*visible)[idx].get() : nullptr;
             }
-            dragging_ = false;
-        }
-        return;
-    }
-
-    if (annotation_type_ == AnnotationType::kEyeTracking) {
-        if (scale <= 0.f) {
-            dragging_ = false;
-            return;
-        }
-
-        if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(0)) {
-            const ImGuiIO& io = ImGui::GetIO();
-            drag_start_ = ImGui::GetMousePos();
+            if (!hit) return;
+            selected_ = {true, hit->timestamp(), hit->typeName(), hit->label()};
+            std::snprintf(annotation_label_.data(), annotation_label_.size(), "%s", hit->label().c_str());
+            if (hit->typeName() == "Point") annotation_type_ = AnnotationType::kPoint;
+            else if (hit->typeName() == "EyeTracking") annotation_type_ = AnnotationType::kEyeTracking;
+            else annotation_type_ = AnnotationType::kBoundingBox;
+            drag_history_snapshot_ = ann_store_->snapshot();
             dragging_ = true;
-            eye_drag_mode_ = io.KeyCtrl
-                ? EyeTrackingDragMode::kMoveCenter
-                : (io.KeyShift ? EyeTrackingDragMode::kResizeRadius
-                               : EyeTrackingDragMode::kOrient);
-
-            const ImVec2 start_sensor = screen_to_sensor(drag_start_, img_origin, scale);
-            const EyeTrackingAnnotationRef existing_eye =
-                find_eye_tracking_annotation_in_bin(*ann_store_, t);
-            const bool has_existing_eye = existing_eye.eye != nullptr;
-
-            eye_edit_active_ = has_existing_eye;
-            eye_edit_index_ = has_existing_eye ? existing_eye.index : 0u;
-            eye_draft_t_ = has_existing_eye ? existing_eye.timestamp : t;
-
-            if (has_existing_eye) {
-                eye_draft_phi_ = existing_eye.eye->phi();
-                eye_draft_theta_ = existing_eye.eye->theta();
-                eye_draft_center_x_ = existing_eye.eye->centerX();
-                eye_draft_center_y_ = existing_eye.eye->centerY();
-                eye_draft_radius_ = existing_eye.eye->radius();
-            } else {
-                eye_draft_phi_ = 0.f;
-                eye_draft_theta_ = 0.f;
-                eye_draft_center_x_ = start_sensor.x;
-                eye_draft_center_y_ = start_sensor.y;
+            annotation_drag_mode_ = AnnotationDragMode::kMove;
+            if (const auto* p = dynamic_cast<const PointAnnotation*>(hit)) {
+                drag_base_x_ = p->x(); drag_base_y_ = p->y();
+            } else if (const auto* b = dynamic_cast<const BoundingBox*>(hit)) {
+                drag_base_x_ = b->x(); drag_base_y_ = b->y();
+                drag_base_w_ = b->w(); drag_base_h_ = b->h();
+                const ImVec2 handles[] = {
+                    {img_origin.x + b->x() * scale, img_origin.y + b->y() * scale},
+                    {img_origin.x + (b->x() + b->w()) * scale, img_origin.y + b->y() * scale},
+                    {img_origin.x + b->x() * scale, img_origin.y + (b->y() + b->h()) * scale},
+                    {img_origin.x + (b->x() + b->w()) * scale, img_origin.y + (b->y() + b->h()) * scale},
+                    {img_origin.x + (b->x() + b->w() * .5f) * scale, img_origin.y + b->y() * scale},
+                    {img_origin.x + (b->x() + b->w() * .5f) * scale, img_origin.y + (b->y() + b->h()) * scale},
+                    {img_origin.x + b->x() * scale, img_origin.y + (b->y() + b->h() * .5f) * scale},
+                    {img_origin.x + (b->x() + b->w()) * scale, img_origin.y + (b->y() + b->h() * .5f) * scale}};
+                for (int corner = 0; corner < 8; ++corner) if (distance(mouse, handles[corner]) <= 12.f) {
+                    annotation_drag_mode_ = AnnotationDragMode::kResize;
+                    bbox_resize_x_ = (corner == 0 || corner == 2 || corner == 6) ? -1
+                        : ((corner == 4 || corner == 5) ? 0 : 1);
+                    bbox_resize_y_ = (corner == 0 || corner == 1 || corner == 4) ? -1
+                        : ((corner == 6 || corner == 7) ? 0 : 1);
+                    break;
+                }
+            } else if (const auto* e = dynamic_cast<const EyeTracking*>(hit)) {
+                eye_draft_phi_ = e->phi(); eye_draft_theta_ = e->theta();
+                eye_draft_center_x_ = e->centerX(); eye_draft_center_y_ = e->centerY();
+                eye_drag_start_center_x_ = e->centerX(); eye_drag_start_center_y_ = e->centerY();
+                eye_draft_radius_ = e->radius();
+                const ImGuiIO& io = ImGui::GetIO();
+                const ImVec2 center(img_origin.x + e->centerX() * scale,
+                                    img_origin.y + e->centerY() * scale);
+                const ImVec2 radius_handle(center.x + e->radius() * scale, center.y);
+                const float c = std::sqrt(1.f - kIrisCircleRatio * kIrisCircleRatio);
+                const ImVec2 gaze(center.x + e->radius() * 1.5f * c * std::sin(e->phi()) * scale,
+                    center.y - e->radius() * 1.5f * c * std::sin(e->theta()) * std::cos(e->phi()) * scale);
+                annotation_drag_mode_ = (io.KeyShift || distance(mouse, radius_handle) <= 12.f)
+                    ? AnnotationDragMode::kResize
+                    : ((io.KeyCtrl || distance(mouse, center) <= 12.f)
+                        ? AnnotationDragMode::kMove : AnnotationDragMode::kOrient);
+            }
+        } else {
+            clearAnnotationSelection();
+            const std::string label(annotation_label_.data());
+            if (label.empty()) { export_status_ = "Enter a label before creating an annotation"; return; }
+            if (ann_store_->contains(t, type_name(annotation_type_), label)) {
+                export_status_ = "That label already exists for this type and time"; return;
+            }
+            drag_history_snapshot_ = ann_store_->snapshot();
+            if (annotation_type_ == AnnotationType::kPoint) {
+                ann_store_->add(std::make_unique<PointAnnotation>(t, sensor.x, sensor.y, label));
+                selected_ = {true, t, "Point", label};
+                pushAnnotationHistory(drag_history_snapshot_);
+                return;
+            }
+            dragging_ = true;
+            annotation_drag_mode_ = AnnotationDragMode::kCreate;
+            if (annotation_type_ == AnnotationType::kEyeTracking) {
+                eye_draft_phi_ = eye_draft_theta_ = 0.f;
+                eye_draft_center_x_ = sensor.x; eye_draft_center_y_ = sensor.y;
                 eye_draft_radius_ = kDefaultEyeRadius;
             }
-            eye_drag_start_center_x_ = eye_draft_center_x_;
-            eye_drag_start_center_y_ = eye_draft_center_y_;
         }
+    }
 
-        const auto update_draft = [&]() {
-            const ImVec2 start_sensor = screen_to_sensor(drag_start_, img_origin, scale);
-            const ImVec2 cur_sensor = screen_to_sensor(ImGui::GetMousePos(),
-                                                       img_origin, scale);
-            switch (eye_drag_mode_) {
-                case EyeTrackingDragMode::kOrient:
-                    update_eye_orientation(
-                        eye_draft_phi_, eye_draft_theta_,
-                        ImVec2(eye_draft_center_x_, eye_draft_center_y_),
-                        cur_sensor,
-                        eye_draft_radius_);
-                    break;
-                case EyeTrackingDragMode::kResizeRadius:
-                    eye_draft_radius_ = std::max(
-                        distance(ImVec2(eye_draft_center_x_, eye_draft_center_y_),
-                                 cur_sensor),
-                        1.f);
-                    break;
-                case EyeTrackingDragMode::kMoveCenter:
-                    eye_draft_center_x_ =
-                        eye_drag_start_center_x_ + (cur_sensor.x - start_sensor.x);
-                    eye_draft_center_y_ =
-                        eye_drag_start_center_y_ + (cur_sensor.y - start_sensor.y);
-                    break;
+    if (!dragging_) return;
+    const ImVec2 start_sensor = screen_to_sensor(drag_start_, img_origin, scale);
+    const float max_x = annotation_image_width_ > 0 ? static_cast<float>(annotation_image_width_) : 1e9f;
+    const float max_y = annotation_image_height_ > 0 ? static_cast<float>(annotation_image_height_) : 1e9f;
+    const ImVec2 cur(std::clamp(sensor.x, 0.f, max_x), std::clamp(sensor.y, 0.f, max_y));
+    if (annotation_type_ == AnnotationType::kBoundingBox) {
+        if (annotation_drag_mode_ == AnnotationDragMode::kCreate) {
+            draft_x_ = std::min(start_sensor.x, cur.x); draft_y_ = std::min(start_sensor.y, cur.y);
+            draft_w_ = std::abs(cur.x - start_sensor.x); draft_h_ = std::abs(cur.y - start_sensor.y);
+        } else if (annotation_drag_mode_ == AnnotationDragMode::kMove) {
+            draft_x_ = std::clamp(drag_base_x_ + cur.x - start_sensor.x, 0.f, std::max(0.f, max_x - drag_base_w_));
+            draft_y_ = std::clamp(drag_base_y_ + cur.y - start_sensor.y, 0.f, std::max(0.f, max_y - drag_base_h_));
+            draft_w_ = drag_base_w_; draft_h_ = drag_base_h_;
+        } else {
+            if (bbox_resize_x_ == 0) { draft_x_ = drag_base_x_; draft_w_ = drag_base_w_; }
+            else {
+                const float opposite_x = bbox_resize_x_ < 0 ? drag_base_x_ + drag_base_w_ : drag_base_x_;
+                draft_x_ = std::min(cur.x, opposite_x);
+                draft_w_ = std::max(1.f, std::abs(cur.x - opposite_x));
             }
-        };
-
-        const auto commit_draft = [&]() {
-            remove_eye_tracking_annotations_in_bin(*ann_store_, eye_draft_t_);
-            ann_store_->add(std::make_unique<EyeTracking>(
-                eye_draft_t_,
-                eye_draft_phi_,
-                eye_draft_theta_,
-                eye_draft_center_x_,
-                eye_draft_center_y_,
-                eye_draft_radius_));
-
-            const EyeTrackingAnnotationRef saved_eye =
-                find_eye_tracking_annotation_in_bin(*ann_store_, eye_draft_t_);
-            eye_edit_active_ = saved_eye.eye != nullptr;
-            eye_edit_index_ = eye_edit_active_ ? saved_eye.index : 0u;
-        };
-
-        if (dragging_ && ImGui::IsMouseDown(0)) {
-            update_draft();
-            EyeTracking preview(eye_draft_t_,
-                                eye_draft_phi_,
-                                eye_draft_theta_,
-                                eye_draft_center_x_,
-                                eye_draft_center_y_,
-                                eye_draft_radius_);
-            preview.renderOverlay(ImGui::GetWindowDrawList(), img_origin, scale);
+            if (bbox_resize_y_ == 0) { draft_y_ = drag_base_y_; draft_h_ = drag_base_h_; }
+            else {
+                const float opposite_y = bbox_resize_y_ < 0 ? drag_base_y_ + drag_base_h_ : drag_base_y_;
+                draft_y_ = std::min(cur.y, opposite_y);
+                draft_h_ = std::max(1.f, std::abs(cur.y - opposite_y));
+            }
         }
+        BoundingBox preview(t, draft_x_, draft_y_, draft_w_, draft_h_, annotation_label_.data());
+        preview.renderOverlay(ImGui::GetWindowDrawList(), img_origin, scale);
+    } else if (annotation_type_ == AnnotationType::kEyeTracking) {
+        if (annotation_drag_mode_ == AnnotationDragMode::kMove) {
+            eye_draft_radius_ = std::min(eye_draft_radius_,
+                std::max(1.f, std::min(max_x, max_y) * 0.5f));
+            eye_draft_center_x_ = std::clamp(eye_drag_start_center_x_ + cur.x - start_sensor.x,
+                eye_draft_radius_, std::max(eye_draft_radius_, max_x - eye_draft_radius_));
+            eye_draft_center_y_ = std::clamp(eye_drag_start_center_y_ + cur.y - start_sensor.y,
+                eye_draft_radius_, std::max(eye_draft_radius_, max_y - eye_draft_radius_));
+        } else if (annotation_drag_mode_ == AnnotationDragMode::kResize)
+            eye_draft_radius_ = std::clamp(distance(ImVec2(eye_draft_center_x_, eye_draft_center_y_), cur),
+                1.f, std::max(1.f, std::min({eye_draft_center_x_, eye_draft_center_y_,
+                    max_x - eye_draft_center_x_, max_y - eye_draft_center_y_})));
+        else update_eye_orientation(eye_draft_phi_, eye_draft_theta_,
+            ImVec2(eye_draft_center_x_, eye_draft_center_y_), cur, eye_draft_radius_);
+        EyeTracking preview(t, eye_draft_phi_, eye_draft_theta_, eye_draft_center_x_,
+            eye_draft_center_y_, eye_draft_radius_, annotation_label_.data());
+        preview.renderOverlay(ImGui::GetWindowDrawList(), img_origin, scale);
+    } else if (annotation_type_ == AnnotationType::kPoint) {
+        draft_x_ = cur.x; draft_y_ = cur.y;
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 preview(img_origin.x + draft_x_ * scale,
+                             img_origin.y + draft_y_ * scale);
+        constexpr ImU32 kPreviewColor = IM_COL32(255, 40, 220, 255);
+        dl->AddCircleFilled(preview, 6.f, kPreviewColor);
+        if (annotation_label_[0] != '\0')
+            dl->AddText(ImVec2(preview.x + 8.f, preview.y - 8.f),
+                        kPreviewColor, annotation_label_.data());
+    }
 
-        if (dragging_ && ImGui::IsMouseReleased(0)) {
-            update_draft();
-            commit_draft();
-            dragging_ = false;
+    if (ImGui::IsMouseReleased(0)) {
+        const std::string label(annotation_label_.data());
+        std::unique_ptr<Annotation> replacement;
+        if (annotation_type_ == AnnotationType::kBoundingBox)
+            replacement = std::make_unique<BoundingBox>(selected_.active ? selected_.timestamp : t,
+                draft_x_, draft_y_, std::max(1.f, draft_w_), std::max(1.f, draft_h_), label);
+        else if (annotation_type_ == AnnotationType::kEyeTracking)
+        {
+            eye_draft_radius_ = std::min(eye_draft_radius_,
+                std::max(1.f, std::min(max_x, max_y) * 0.5f));
+            eye_draft_center_x_ = std::clamp(eye_draft_center_x_, eye_draft_radius_,
+                std::max(eye_draft_radius_, max_x - eye_draft_radius_));
+            eye_draft_center_y_ = std::clamp(eye_draft_center_y_, eye_draft_radius_,
+                std::max(eye_draft_radius_, max_y - eye_draft_radius_));
+            replacement = std::make_unique<EyeTracking>(selected_.active ? selected_.timestamp : t,
+                eye_draft_phi_, eye_draft_theta_, eye_draft_center_x_, eye_draft_center_y_,
+                eye_draft_radius_, label);
         }
+        else replacement = std::make_unique<PointAnnotation>(selected_.timestamp, draft_x_, draft_y_, label);
+        if (selected_.active)
+            ann_store_->replace(selected_.timestamp, selected_.type, selected_.label, std::move(replacement));
+        else {
+            ann_store_->add(std::move(replacement));
+            selected_ = {true, t, type_name(annotation_type_), label};
+        }
+        pushAnnotationHistory(drag_history_snapshot_);
+        dragging_ = false;
+        annotation_drag_mode_ = AnnotationDragMode::kNone;
     }
 }
 
@@ -579,20 +800,23 @@ void ViewerPanel::drawAnnotationOverlay(ImVec2 img_origin, float scale, int64_t 
         : ann_store_->queryAt(t);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     if (anns) for (std::size_t i = 0; i < anns->size(); ++i) {
+        const Annotation* current = (*anns)[i].get();
+        if (dragging_ && selected_.active &&
+            current->timestamp() == selected_.timestamp &&
+            current->typeName() == selected_.type &&
+            current->label() == selected_.label)
+            continue;
         if (dynamic_cast<const PointAnnotation*>((*anns)[i].get())) continue;
-        if (dragging_ &&
-            annotation_type_ == AnnotationType::kEyeTracking &&
-            eye_edit_active_) {
-            const auto* eye = dynamic_cast<const EyeTracking*>((*anns)[i].get());
-            if (eye && eye->timestamp() == eye_draft_t_) {
-                continue;
-            }
-        }
         (*anns)[i]->renderOverlay(dl, img_origin, scale);
     }
 
     if (interpolation_enabled_) {
         if (anns) for (const auto& ann : *anns) {
+            if (dragging_ && selected_.active &&
+                ann->timestamp() == selected_.timestamp &&
+                ann->typeName() == selected_.type &&
+                ann->label() == selected_.label)
+                continue;
             if (const auto* point = dynamic_cast<const PointAnnotation*>(ann.get()))
                 point->renderOverlay(dl, img_origin, scale);
         }
@@ -604,16 +828,64 @@ void ViewerPanel::drawAnnotationOverlay(ImVec2 img_origin, float scale, int64_t 
             ann->renderOverlay(dl, img_origin, scale);
         }
     } else {
-        const auto nearby = ann_store_->queryRange(t - 20'000, t + 20'001);
-        const PointAnnotation* closest = nullptr;
-        int64_t closest_delta = 20'001;
-        for (const Annotation* ann : nearby) {
-            const auto* point = dynamic_cast<const PointAnnotation*>(ann);
-            if (!point) continue;
-            const int64_t delta = std::llabs(point->timestamp() - t);
-            if (delta < closest_delta) { closest = point; closest_delta = delta; }
-        }
-        if (closest) closest->renderOverlay(dl, img_origin, scale);
+        if (anns) for (const auto& ann : *anns)
+            if (!(dragging_ && selected_.active &&
+                  ann->timestamp() == selected_.timestamp &&
+                  ann->typeName() == selected_.type &&
+                  ann->label() == selected_.label))
+              if (const auto* point = dynamic_cast<const PointAnnotation*>(ann.get()))
+                point->renderOverlay(dl, img_origin, scale);
+    }
+
+    if (!annotating_ || !selected_.active || scale <= 0.f) return;
+    if (dragging_) return;
+    bool selected_visible = false;
+    const auto* current = interpolation_enabled_ ? ann_store_->queryExact(t)
+                                                  : ann_store_->queryAt(t);
+    if (current) for (const auto& item : *current)
+        if (item->timestamp() == selected_.timestamp && item->typeName() == selected_.type &&
+            item->label() == selected_.label) { selected_visible = true; break; }
+    if (!selected_visible) return;
+    const auto* bucket = ann_store_->queryExact(selected_.timestamp);
+    const std::size_t index = ann_store_->findIndex(selected_.timestamp,
+        selected_.type, selected_.label);
+    if (!bucket || index >= bucket->size()) return;
+    const Annotation* ann = (*bucket)[index].get();
+    constexpr ImU32 kSelected = IM_COL32(255, 40, 220, 255);
+    constexpr float kHandle = 4.f;
+    const auto handle = [&](ImVec2 p) {
+        dl->AddRectFilled(ImVec2(p.x - kHandle, p.y - kHandle),
+                          ImVec2(p.x + kHandle, p.y + kHandle), kSelected);
+    };
+    if (const auto* p = dynamic_cast<const PointAnnotation*>(ann)) {
+        const ImVec2 pos(img_origin.x + p->x() * scale,
+                         img_origin.y + p->y() * scale);
+        dl->AddCircle(pos, 9.f, kSelected, 0, 2.5f);
+        if (!p->label().empty()) dl->AddText(ImVec2(pos.x + 10.f, pos.y - 10.f), kSelected, p->label().c_str());
+    } else if (const auto* b = dynamic_cast<const BoundingBox*>(ann)) {
+        const ImVec2 tl(img_origin.x + b->x() * scale, img_origin.y + b->y() * scale);
+        const ImVec2 br(img_origin.x + (b->x() + b->w()) * scale,
+                        img_origin.y + (b->y() + b->h()) * scale);
+        dl->AddRect(tl, br, kSelected, 0.f, 0, 2.5f);
+        handle(tl); handle(br); handle(ImVec2(br.x, tl.y)); handle(ImVec2(tl.x, br.y));
+        handle(ImVec2((tl.x + br.x) * .5f, tl.y));
+        handle(ImVec2((tl.x + br.x) * .5f, br.y));
+        handle(ImVec2(tl.x, (tl.y + br.y) * .5f));
+        handle(ImVec2(br.x, (tl.y + br.y) * .5f));
+        if (!b->label().empty()) dl->AddText(tl, kSelected, b->label().c_str());
+    } else if (const auto* e = dynamic_cast<const EyeTracking*>(ann)) {
+        const ImVec2 center(img_origin.x + e->centerX() * scale,
+                            img_origin.y + e->centerY() * scale);
+        dl->AddCircle(center, e->radius() * scale, kSelected, 0, 2.5f);
+        handle(center);
+        const ImVec2 radius_handle(center.x + e->radius() * scale, center.y);
+        handle(radius_handle);
+        const float c = std::sqrt(1.f - kIrisCircleRatio * kIrisCircleRatio);
+        const ImVec2 gaze(center.x + e->radius() * 1.5f * c * std::sin(e->phi()) * scale,
+            center.y - e->radius() * 1.5f * c * std::sin(e->theta()) * std::cos(e->phi()) * scale);
+        dl->AddLine(center, gaze, kSelected, 2.5f); handle(gaze);
+        if (!e->label().empty()) dl->AddText(ImVec2(center.x + e->radius() * scale + 5.f,
+            center.y - e->radius() * scale), kSelected, e->label().c_str());
     }
 }
 

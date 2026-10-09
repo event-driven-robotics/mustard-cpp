@@ -10,6 +10,7 @@
 // No display server, no GL context, and no file I/O are required.
 
 #include "mustard/ui/DVSViewerPanel.h"
+#include "mustard/annotation/PointAnnotation.h"
 
 #include <gtest/gtest.h>
 
@@ -29,6 +30,17 @@ class AnnotationTimePanel : public DVSViewerPanel {
 public:
     AnnotationTimePanel() : DVSViewerPanel(nullptr, "annotation-time") {}
     using ViewerPanel::annotationTimeUs;
+};
+
+class AnnotationHistoryPanel : public DVSViewerPanel {
+public:
+    AnnotationHistoryPanel() : DVSViewerPanel(nullptr, "annotation-history") {}
+    using ViewerPanel::pushAnnotationHistory;
+    using ViewerPanel::undoAnnotation;
+    using ViewerPanel::redoAnnotation;
+    std::size_t undoSize() const { return undo_history_.size(); }
+    std::size_t redoSize() const { return redo_history_.size(); }
+    void setCurrentAnnotationTime(int64_t t) { current_annotation_time_us_ = t; }
 };
 
 // ---------------------------------------------------------------------------
@@ -63,6 +75,54 @@ TEST_F(DVSViewerPanelTest, AnnotationTimeIsRelativeToPanelStartOffset) {
     panel.setStartOffset(9'000'000);
     EXPECT_EQ(panel.annotationTimeUs(9'000'000), 0);
     EXPECT_EQ(panel.annotationTimeUs(9'250'000), 250'000);
+}
+
+TEST_F(DVSViewerPanelTest, AnnotationHistoryUndoesRedoesAndInvalidatesRedo) {
+    AnnotationHistoryPanel panel;
+    const std::string before = panel.annotationStore()->snapshot();
+    panel.annotationStore()->add(std::make_unique<PointAnnotation>(1, 2.f, 3.f, "p"));
+    panel.pushAnnotationHistory(before);
+    EXPECT_EQ(panel.annotationStore()->totalCount(), 1u);
+    panel.undoAnnotation();
+    EXPECT_EQ(panel.annotationStore()->totalCount(), 0u);
+    EXPECT_EQ(panel.redoSize(), 1u);
+    panel.redoAnnotation();
+    EXPECT_EQ(panel.annotationStore()->totalCount(), 1u);
+    panel.undoAnnotation();
+    const std::string new_before = panel.annotationStore()->snapshot();
+    panel.annotationStore()->add(std::make_unique<PointAnnotation>(2, 4.f, 5.f, "q"));
+    panel.pushAnnotationHistory(new_before);
+    EXPECT_EQ(panel.redoSize(), 0u);
+}
+
+TEST_F(DVSViewerPanelTest, AnnotationHistoryIsBoundedToOneHundredEntries) {
+    AnnotationHistoryPanel panel;
+    for (int i = 0; i < 105; ++i) {
+        const std::string before = panel.annotationStore()->snapshot();
+        panel.annotationStore()->add(std::make_unique<PointAnnotation>(i, 1.f, 2.f,
+            "p" + std::to_string(i)));
+        panel.pushAnnotationHistory(before);
+    }
+    EXPECT_EQ(panel.undoSize(), 100u);
+}
+
+TEST_F(DVSViewerPanelTest, UndoAndRedoSeekToChangedAnnotationTime) {
+    AnnotationHistoryPanel panel;
+    panel.setStartOffset(1'000);
+    panel.setCurrentAnnotationTime(20);
+    int64_t requested_time = -1;
+    panel.setTimelineSeekCallback([&](int64_t t) { requested_time = t; });
+
+    const std::string before = panel.annotationStore()->snapshot();
+    panel.annotationStore()->add(std::make_unique<PointAnnotation>(75, 2.f, 3.f, "p"));
+    panel.pushAnnotationHistory(before);
+    panel.undoAnnotation();
+    EXPECT_EQ(requested_time, 1'075);
+
+    requested_time = -1;
+    panel.setCurrentAnnotationTime(75);
+    panel.redoAnnotation();
+    EXPECT_EQ(requested_time, -1) << "Already viewing the affected time";
 }
 
 // ---------------------------------------------------------------------------

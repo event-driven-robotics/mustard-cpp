@@ -6,6 +6,9 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <array>
+#include <functional>
+#include <optional>
 
 namespace mustard {
 
@@ -14,12 +17,6 @@ enum class AnnotationType {
     kBoundingBox,
     kEyeTracking,
     kPoint,
-};
-
-enum class EyeTrackingDragMode {
-    kOrient,
-    kResizeRadius,
-    kMoveCenter,
 };
 
 struct VideoExportSettings {
@@ -77,6 +74,9 @@ public:
     void setAnnotationStore(std::shared_ptr<AnnotationStore> store);
     std::shared_ptr<AnnotationStore> annotationStore() const noexcept { return ann_store_; }
     void setAnnotationFileStem(std::string stem) { annotation_file_stem_ = std::move(stem); }
+    void setTimelineSeekCallback(std::function<void(int64_t)> callback) {
+        timeline_seek_callback_ = std::move(callback);
+    }
 
 protected:
     std::string label_;
@@ -98,16 +98,34 @@ protected:
     // Drag state for annotation drawing
     ImVec2 drag_start_{0.f, 0.f};
     bool   dragging_{false};
+    enum class AnnotationDragMode { kNone, kCreate, kMove, kResize, kOrient };
+    AnnotationDragMode annotation_drag_mode_{AnnotationDragMode::kNone};
 
-    EyeTrackingDragMode eye_drag_mode_{EyeTrackingDragMode::kOrient};
-    int64_t eye_draft_t_{0};
+    struct AnnotationSelection {
+        bool active{false};
+        int64_t timestamp{0};
+        std::string type;
+        std::string label;
+    } selected_;
+    std::array<char, 128> annotation_label_{};
+    struct AnnotationHistoryEntry {
+        std::string state;
+        std::optional<int64_t> affected_time_us;
+    };
+    std::vector<AnnotationHistoryEntry> undo_history_;
+    std::vector<AnnotationHistoryEntry> redo_history_;
+    std::function<void(int64_t)> timeline_seek_callback_;
+    int64_t current_annotation_time_us_{-1};
+    std::string drag_history_snapshot_;
+    float draft_x_{0.f}, draft_y_{0.f}, draft_w_{0.f}, draft_h_{0.f};
+    float drag_base_x_{0.f}, drag_base_y_{0.f}, drag_base_w_{0.f}, drag_base_h_{0.f};
+    int bbox_resize_x_{1}, bbox_resize_y_{1};
+
     float   eye_draft_phi_{0.f};
     float   eye_draft_theta_{0.f};
     float   eye_draft_center_x_{0.f};
     float   eye_draft_center_y_{0.f};
     float   eye_draft_radius_{100.f};
-    bool    eye_edit_active_{false};
-    std::size_t eye_edit_index_{0};
     float   eye_drag_start_center_x_{0.f};
     float   eye_drag_start_center_y_{0.f};
     int annotation_image_width_{0};
@@ -149,6 +167,11 @@ protected:
     /// Render all annotations from ann_store_ at timestamp @p t as overlay.
     /// Call after ImGui::Image (and after interaction) when the image is valid.
     void drawAnnotationOverlay(ImVec2 img_origin, float scale, int64_t t) const;
+
+    void pushAnnotationHistory(const std::string& before);
+    void undoAnnotation();
+    void redoAnnotation();
+    void clearAnnotationSelection();
 
 private:
     struct ExportJob;

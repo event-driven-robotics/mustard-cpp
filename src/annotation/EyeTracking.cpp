@@ -7,6 +7,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <utility>
 
 namespace mustard {
 
@@ -37,13 +38,14 @@ ImVec2 project_sensor_point(ImVec2 origin, float scale, float x, float y) {
 } // namespace
 
 EyeTracking::EyeTracking(int64_t t, float phi, float theta,
-                         float center_x, float center_y, float radius)
+                         float center_x, float center_y, float radius,
+                         std::string label)
     : t_(t),
       phi_(phi),
       theta_(theta),
       center_x_(center_x),
       center_y_(center_y),
-      radius_(std::max(radius, 1.f))
+      radius_(std::max(radius, 1.f)), label_(std::move(label))
 {}
 
 void EyeTracking::renderOverlay(ImDrawList* dl, ImVec2 origin, float scale) const {
@@ -92,6 +94,10 @@ void EyeTracking::renderOverlay(ImDrawList* dl, ImVec2 origin, float scale) cons
     dl->AddCircleFilled(iris, kPointRadius, kCenterColor);
     dl->AddCircleFilled(center, kPointRadius, kCenterColor);
     dl->AddLine(center, gaze, kLineColor, 1.5f);
+    if (!label_.empty())
+        dl->AddText(ImVec2(center.x + radius_ * scale + 4.f,
+                           center.y - radius_ * scale),
+                    kEllipseColor, label_.c_str());
 }
 
 std::string EyeTracking::serialize() const {
@@ -104,6 +110,7 @@ std::string EyeTracking::serialize() const {
         << " center_x=" << center_x_
         << " center_y=" << center_y_
         << " radius=" << radius_
+        << " label=" << label_
         << "\n";
     return oss.str();
 }
@@ -117,7 +124,12 @@ std::unique_ptr<EyeTracking> EyeTracking::deserialize(const std::string& s) {
         const float center_y = std::stof(extract_field(s, "center_y"));
         const float radius = std::stof(extract_field(s, "radius"));
 
-        return std::make_unique<EyeTracking>(t, phi, theta, center_x, center_y, radius);
+        std::string label;
+        const auto pos = s.find(" label=");
+        if (pos != std::string::npos) label = s.substr(pos + 7);
+        while (!label.empty() && (label.back() == '\n' || label.back() == '\r')) label.pop_back();
+        return std::make_unique<EyeTracking>(t, phi, theta, center_x, center_y,
+                                             radius, std::move(label));
     } catch (...) {
         return nullptr;
     }

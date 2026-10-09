@@ -32,6 +32,13 @@ void AnnotationStore::add(std::unique_ptr<Annotation> ann) {
             const auto* endpoint = dynamic_cast<const InterpolationEndpoint*>(item.get());
             return endpoint && endpoint->kind() == kind;
         }), bucket.end());
+        for (auto& existing : bucket) {
+            if (existing->typeName() == ann->typeName() &&
+                existing->label() == ann->label()) {
+                existing = std::move(ann);
+                return;
+            }
+        }
     }
     annotations_[t].push_back(std::move(ann));
 }
@@ -47,6 +54,32 @@ void AnnotationStore::remove(int64_t t, std::size_t index) {
 
     // Clean up the bucket when it becomes empty so queryAt returns nullptr
     if (vec.empty()) annotations_.erase(it);
+}
+
+std::size_t AnnotationStore::findIndex(int64_t t, const std::string& type,
+                                       const std::string& label) const {
+    const auto it = annotations_.find(t);
+    if (it == annotations_.end()) return static_cast<std::size_t>(-1);
+    for (std::size_t i = 0; i < it->second.size(); ++i)
+        if (it->second[i]->typeName() == type && it->second[i]->label() == label)
+            return i;
+    return static_cast<std::size_t>(-1);
+}
+
+bool AnnotationStore::contains(int64_t t, const std::string& type,
+                               const std::string& label) const {
+    return findIndex(t, type, label) != static_cast<std::size_t>(-1);
+}
+
+bool AnnotationStore::replace(int64_t t, const std::string& type,
+                              const std::string& label,
+                              std::unique_ptr<Annotation> replacement) {
+    const std::size_t index = findIndex(t, type, label);
+    if (index == static_cast<std::size_t>(-1) || !replacement ||
+        replacement->timestamp() != t) return false;
+    auto& bucket = annotations_.find(t)->second;
+    bucket[index] = std::move(replacement);
+    return true;
 }
 
 void AnnotationStore::clear() {
@@ -175,6 +208,13 @@ bool AnnotationStore::deserialize(const std::string& s) {
         if (!ann) return false;
         add(std::move(ann));
     }
+    return true;
+}
+
+bool AnnotationStore::restore(const std::string& state) {
+    AnnotationStore restored;
+    if (!restored.deserialize(state)) return false;
+    annotations_ = std::move(restored.annotations_);
     return true;
 }
 

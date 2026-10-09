@@ -14,7 +14,8 @@ namespace mustard {
 class EyeTracking : public Annotation {
 public:
     EyeTracking(int64_t t, float phi, float theta,
-                float center_x, float center_y, float radius);
+                float center_x, float center_y, float radius,
+                std::string label = {});
 
     void renderOverlay(ImDrawList* dl, ImVec2 origin, float scale) const override;
 
@@ -27,6 +28,7 @@ public:
     float centerX()  const noexcept { return center_x_; }
     float centerY()  const noexcept { return center_y_; }
     float radius()   const noexcept { return radius_; }
+    const std::string& label() const noexcept override { return label_; }
 
     static std::unique_ptr<EyeTracking> deserialize(const std::string& s);
 
@@ -37,6 +39,7 @@ private:
     float   center_x_;
     float   center_y_;
     float   radius_;
+    std::string label_;
 };
 
 } // namespace mustard
